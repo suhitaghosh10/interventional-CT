@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="gitlab-quickmr">
+    <option name="gitLabUri" value="https://code.ovgu.de/ai-lab/interventional-ct.git" />
+    <option name="defaultTargetBranch" value="master" />
+    <option name="defaultTitle" value="updated" />
+    <option name="defaultDescription" value="" />
+    <option name="defaultLabels" value="" />
+    <option name="removeSourceBranchOnMerge" value="true" />
+    <option name="assigneesEnabled" value="false" />
+    <option name="showConfirmationDialog" value="true" />
+    <option name="insecureTls" value="true" />
+  </component>
+</project>
