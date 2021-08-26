@@ -6,7 +6,7 @@ from utility.constants import *
 
 import argparse
 
-from dataset.head_carm.dataset_creation import generate_perceptual_dataset
+from dataset.head_carm.dataset_creation import generate_perceptual_dataset_from_3D
 from dataset.head_carm.models.prior_unet import unet
 from utility.utils import ssim, psnr, mse, lr_scheduler_linear
 from utility.weight_norm import AdamWithWeightnorm
@@ -22,7 +22,7 @@ parser.add_argument('-bf', '--buffer', type=int, default=512, help='Buffer size 
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
 parser.add_argument('-g', '--gpu', type=str, default='2', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
-parser.add_argument('-eager', '--eager', type=bool, default=True, help='eager mode')
+parser.add_argument('-eager', '--eager', type=bool, default=False, help='eager mode')
 parser.add_argument('-path', '--path', type=str, default='/project/sghosh/experiments/', help='path to experiments folder')
 
 args = parser.parse_args()
@@ -45,7 +45,7 @@ is_eager = args.eager
 scratch_dir = args.path
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
-ds, vds, teds = generate_perceptual_dataset(IMGS_2D_SHARDS_PATH, bs, buffer)
+ds, vds, teds = generate_perceptual_dataset_from_3D(IMGS_2D_SHARDS_PATH, bs, buffer)
 steps = (TRAIN_NUM * augm_no) // bs
 
 NAME = 'Unet_Prior_needle2_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'

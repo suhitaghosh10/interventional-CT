@@ -43,7 +43,7 @@ def mse(dim, paddings=None, weight=1):
         return masked_mse
 
 
-@tf.function
+
 def augment_prior(image:tf.Tensor, annotation:tf.Tensor):
         MAX_ANGLE_PRIOR = tf.constant(0.25)
         #MAX_ANGLE_PRIOR= 0.0873
@@ -68,8 +68,8 @@ def augment_prior(image:tf.Tensor, annotation:tf.Tensor):
 
         if tf.equal(rand_num, tf.constant(1)):
             image, annotation = _rotate(image, angle), _rotate(annotation, angle)
-        if tf.equal(rand_num, tf.constant(2)):
-            image, annotation = _scale(image, scale_ratio), _scale(annotation, scale_ratio)
+        # if tf.equal(rand_num, tf.constant(2)):
+        #     image, annotation = _scale(image, scale_ratio), _scale(annotation, scale_ratio)
         if tf.equal(rand_num, tf.constant(3)):
             image, annotation = _flip(image), _flip(annotation)
         if tf.equal(rand_num, tf.constant(4)):
