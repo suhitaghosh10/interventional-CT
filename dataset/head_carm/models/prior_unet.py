@@ -2,7 +2,8 @@
 from tensorflow.keras.layers import concatenate, Input, Conv2D, Conv2DTranspose, \
     Dropout, BatchNormalization, Lambda
 
-from keras.models import Model
+from tensorflow.keras.models import Model
+
 
 class unet:
     def __init__(self):

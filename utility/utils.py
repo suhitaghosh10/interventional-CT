@@ -37,7 +37,8 @@ def mse(dim, paddings=None, weight=1):
                 mask = tf.pad(temp, paddings=paddings)
                 y_true = mask * y_true
                 y_pred = mask * y_pred
-            return weight * mse
+            mse_val = tf.metrics.mean_squared_error(y_pred, y_true)
+            return weight * mse_val
 
         return masked_mse
 

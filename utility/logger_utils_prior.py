@@ -1,7 +1,7 @@
 from utility.common_imports import *
 from matplotlib import pyplot as plt
 from utility.constants import *
-from utility.utils import idct_blockwise, augment_prior
+from utility.utils import augment_prior
 from dataset.head_carm.constants import CARM_DCT_MIN, CARM_DCT_MAX
 import io
 

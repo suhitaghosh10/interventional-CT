@@ -20,9 +20,9 @@ parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of tr
 parser.add_argument('-bs', '--batch', type=int, default=64, help='Batch size for training')
 parser.add_argument('-bf', '--buffer', type=int, default=512, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
-parser.add_argument('-g', '--gpu', type=str, default='2, 3', help='gpu num')
+parser.add_argument('-g', '--gpu', type=str, default='2', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
-parser.add_argument('-eager', '--eager', type=bool, default=False, help='eager mode')
+parser.add_argument('-eager', '--eager', type=bool, default=True, help='eager mode')
 parser.add_argument('-path', '--path', type=str, default='/project/sghosh/experiments/', help='path to experiments folder')
 
 args = parser.parse_args()
@@ -49,7 +49,7 @@ ds, vds, teds = generate_perceptual_dataset(IMGS_2D_SHARDS_PATH, bs, buffer)
 steps = (TRAIN_NUM * augm_no) // bs
 
 NAME = 'Unet_Prior_needle2_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'
-CHKPNT_PATH = scratch_dir+'carmh/UnetPrior_needle2_seed'+str(expt.get_seed())+'/chkpnt/'
+CHKPNT_PATH = scratch_dir+'carmhtest/UnetPrior_needle2_seed'+str(expt.get_seed())+'/chkpnt/'
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
 # Create a MirroredStrategy.
@@ -116,5 +116,8 @@ with strategy.scope():
 
     # # Fit
     #model.summary()
-    model.fit(ds, validation_data=vds, epochs=epochs, callbacks=callbacks,
-              steps_per_epoch=steps, validation_steps=VAL_NUM // bs)
+    model.fit(ds,
+              #validation_data=vds,
+              epochs=epochs, callbacks=callbacks,
+              steps_per_epoch=steps)
+              #validation_steps=VAL_NUM // bs)

@@ -2,7 +2,7 @@
 # https://github.com/openai/weightnorm/blob/master/keras/weightnorm.py
 
 from utility.common_imports import *
-from keras.optimizers import Adam
+from tensorflow.keras.optimizers import Adam
 
 
 # adapted from keras.optimizers.Adam

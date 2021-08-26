@@ -22,12 +22,13 @@ def generate_perceptual_dataset(data_path, batch_size=1, buffer_size=1024):
         for filename in files:
             file_paths.append(os.path.abspath(os.path.join(folder, filename)))
     # np.random.random(file_paths)
-    train_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=6)
+    train_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
     val_dataset = tf.data.TFRecordDataset(os.path.join(data_path , VAL, CARMHEAD_2D_TFRECORDS_VAL))
     test_dataset = tf.data.TFRecordDataset(os.path.join(data_path, TEST, CARMHEAD_2D_TFRECORDS_TEST))
 
     tds = train_dataset.map(_read_and_decode, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    tds = tds.shuffle(buffer_size=buffer_size).map(augment_prior).batch(batch_size=batch_size)
+    tds = tds.shuffle(buffer_size=buffer_size).map(augment_prior)
+    tds = tds.batch(batch_size=batch_size)
     tds = tds.repeat()
     tds = tds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
@@ -62,6 +63,25 @@ def _read_and_decode(example_proto):
     return annotation[start:start+IMG_DIM_INP_2D[0], start:start+IMG_DIM_INP_2D[1],:], \
            image[start:start+IMG_DIM_INP_2D[0], start:start+IMG_DIM_INP_2D[1],:]
 
+
+def _read_and_decode_poc(example_proto):
+
+    feature = tf.io.parse_single_example(
+        example_proto,
+        features={
+            'name': tf.io.FixedLenFeature([], tf.string),
+            'img': tf.io.FixedLenFeature([], tf.string),
+            'gt': tf.io.FixedLenFeature([], tf.string)
+        })
+
+    start = (IMG_DIM_ORIG_2D[0] - IMG_DIM_INP_2D[0]) // 2
+
+    image = tf.io.decode_raw(feature['img'], tf.float16)
+    annotation = tf.io.decode_raw(feature['gt'], tf.float16)
+    image= tf.repeat(tf.reshape(image, (1, IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1)), repeats=24, axis=0)
+    annotation = tf.repeat(tf.reshape(annotation, (1, IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1)), repeats=24, axis=0)
+    #return [384, 384, 1]
+    return annotation, image
 
 def generate_tf_records(data_path, save_path, create_tf_record=[True, True, True]):
     z_start = 80
