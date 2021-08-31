@@ -43,49 +43,34 @@ def mse(dim, paddings=None, weight=1):
         return masked_mse
 
 
+def augment_prior(input_tensor: tf.Tensor):
+    sparse_reco = input_tensor[..., 0]
+    prior = input_tensor[..., 1]
+    full_reco = input_tensor[..., 2]
 
-def augment_prior(image:tf.Tensor, annotation:tf.Tensor):
-        MAX_ANGLE_PRIOR = tf.constant(0.25)
-        #MAX_ANGLE_PRIOR= 0.0873
-        NEEDLE_MAX_ANGLE = tf.constant(3.14)
-        image = tf.cast(image, dtype=tf.float32)
-        annotation = tf.cast(annotation, dtype=tf.float32)
-        needle_type = tf.random.uniform(minval=0, maxval=2, dtype=tf.int32, shape=[])
-        #needle_type = tf.constant(1)
-        needle = _get_needle_tensor(needle_type)
-        #needle = _get_needle_tensor(tf.constant(1, dtype=tf.int32))
-        # 0-none 1-rotate 2-scale 3-flip 4-flip_rotate
-        rand_num = tf.random.uniform(shape=[], minval=0, maxval=5, dtype=tf.int32, seed=10)
-        #rand_num = 4
-        angle = tf.random.uniform(shape=[], minval=-AUGMENTATION_MAX_ANGLE, maxval=AUGMENTATION_MAX_ANGLE,
-                                           dtype=tf.float32, seed=10)
-        needle_angle = tf.random.uniform(shape=[], minval=-NEEDLE_MAX_ANGLE, maxval=NEEDLE_MAX_ANGLE,
-                                  dtype=tf.float32, seed=15)
-        # dont rotate the prior image too much!
-        prior_angle = tf.random.uniform(shape=[], minval=-MAX_ANGLE_PRIOR, maxval=MAX_ANGLE_PRIOR,
-                                  dtype=tf.float32, seed=10)
-        scale_ratio = tf.random.uniform(shape=[], minval=0.8, maxval=1.0, dtype=tf.float32, seed=10)
+    sparse_reco = tf.cast(sparse_reco, dtype=tf.float32)
+    prior = tf.cast(prior, dtype=tf.float32)
+    full_reco = tf.cast(full_reco, dtype=tf.float32)
 
-        if tf.equal(rand_num, tf.constant(1)):
-            image, annotation = _rotate(image, angle), _rotate(annotation, angle)
-        # if tf.equal(rand_num, tf.constant(2)):
-        #     image, annotation = _scale(image, scale_ratio), _scale(annotation, scale_ratio)
-        if tf.equal(rand_num, tf.constant(3)):
-            image, annotation = _flip(image), _flip(annotation)
-        if tf.equal(rand_num, tf.constant(4)):
-            image, annotation = _flip_rotate(image, angle), _flip_rotate(annotation, angle)
+    # 0-none 1-rotate 2-scale 3-flip 4-flip_rotate
+    rand_num = tf.random.uniform(shape=[], minval=0, maxval=5, dtype=tf.int32, seed=10)
+    angle = tf.random.uniform(shape=[], minval=-AUGMENTATION_MAX_ANGLE, maxval=AUGMENTATION_MAX_ANGLE,
+                              dtype=tf.float32, seed=10)
 
-        if tf.equal(needle_type, tf.constant(0)):
-            needle = _rotate(needle, needle_angle)
-            image = tf.where(needle > 0., tf.random.uniform(shape=[], minval=0.9, maxval=1.5, dtype=tf.float32), image)
-        else:
-            needle = _translate(needle)
-            image = tf.where(needle > 0., tf.random.uniform(shape=[], minval=1.0, maxval=1.5, dtype=tf.float32),
-                                     image)
+    if tf.equal(rand_num, tf.constant(1)):
+        sparse_reco, prior = _rotate(sparse_reco, angle), _rotate(prior, angle)
+        full_reco = _rotate(full_reco, angle)
+    # if tf.equal(rand_num, tf.constant(2)):
+    #     image, annotation = _scale(image, scale_ratio), _scale(annotation, scale_ratio)
+    if tf.equal(rand_num, tf.constant(3)):
+        sparse_reco, prior = _flip(sparse_reco), _flip(prior)
+        full_reco = _flip(full_reco)
+    if tf.equal(rand_num, tf.constant(4)):
+        sparse_reco, prior = _flip_rotate(sparse_reco, angle), _flip_rotate(prior, angle)
+        full_reco = _flip_rotate(full_reco, angle)
 
-        prior = _rotate(annotation, prior_angle)
-        annotation = tf.where(needle > 0., 1., annotation)
-        return [image, prior], annotation
+    return [sparse_reco, prior], full_reco
+
 
 def _get_needle_numpy(needle_type):
     #circle_flag = np.random.randint(0, 1)

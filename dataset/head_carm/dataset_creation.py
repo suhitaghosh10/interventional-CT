@@ -1,13 +1,17 @@
+import os
 from typing import Tuple
+
+import numpy as np
+import tensorflow as tf
 import torch
 from torch_radon import ConeBeam
 from torch_radon.volumes import Volume3D
+
+from dataset.head_carm.constants import *
 from utility.ct_utils import mu2hu, filter_sinogram_3d
-from utility.common_imports import *
-from utility.utils import augment_prior, insert_needle
+from utility.utils import augment_prior
 from utility.den_utils import read_den_volume
 from utility.ict_system import ArtisQSystem, DetectorBinning
-from dataset.head_carm.constants import *
 
 CARMHEAD_2D_TFRECORDS_TRAIN = 'carmhead.tfrecords.train'
 CARMHEAD_2D_TFRECORDS_VAL = 'carmhead.tfrecords.val'
@@ -21,92 +25,57 @@ def _bytes_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
-def generate_perceptual_dataset(data_path, batch_size=1, buffer_size=1024):
+def generate_datasets(data_path, batch_size=1, buffer_size=1024):
     file_paths = []
-
     for folder, subs, files in os.walk(os.path.join(data_path, TRAIN)):
         for filename in files:
             file_paths.append(os.path.abspath(os.path.join(folder, filename)))
-    # np.random.random(file_paths)
-    train_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
-    val_dataset = tf.data.TFRecordDataset(os.path.join(data_path , VAL, CARMHEAD_2D_TFRECORDS_VAL))
-    test_dataset = tf.data.TFRecordDataset(os.path.join(data_path, TEST, CARMHEAD_2D_TFRECORDS_TEST))
+    volumes_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
+    vol_ds = volumes_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [w, h, 360]
+    vol_ds = vol_ds.repeat()
+    vol_ds = vol_ds.shuffle(buffer_size=buffer_size)
 
-    tds = train_dataset.map(_read_and_decode, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    file_paths = []
+    for folder, subs, files in os.walk(os.path.join(data_path, NEEDLE_PROJECTIONS)):
+        for filename in files:
+            file_paths.append(os.path.abspath(os.path.join(folder, filename)))
+    needle_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
+    ndl_ds = needle_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360]
+    ndl_ds = ndl_ds.map(_random_rotate_needle, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360]
+    ndl_ds = ndl_ds.repeat()
+    ndl_ds = ndl_ds.shuffle(buffer_size=buffer_size)
+
+    full_radon = create_radon(360)
+    sparse_radon = create_radon(18)  # TODO
+    def patched_reco_fn(example_proto):
+        return _reconstruct_3D_poc(example_proto, full_radon, sparse_radon)
+
+    # training set
+    tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # ([u, v, 360], [u, v, 360])
+    tds = tds.map(patched_reco_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
+    tds = tds.unbatch()  # [h, w, 3]
+    tds = tds.map(augment_prior)  # ([[h, w], [h, w]], [h, w])
     tds = tds.shuffle(buffer_size=buffer_size)
-    tds = tds.map(augment_prior)
-    tds = tds.batch(batch_size=batch_size)
-    tds = tds.repeat()
+    tds = tds.batch(batch_size)
     tds = tds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    vds = val_dataset.map(_read_and_decode_3D_poc, num_parallel_calls=tf.data.experimental.AUTOTUNE).batch(batch_size=batch_size)
-    vds = vds.map(insert_needle)
+    # validation set # TODO
+    val_dataset = tf.data.TFRecordDataset(os.path.join(data_path , VAL, CARMHEAD_2D_TFRECORDS_VAL))
+    vds = val_dataset.map(_decode_validation_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    vds = vds.batch(batch_size=batch_size)
     vds = vds.repeat()
     vds = vds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    teds = test_dataset.map(_read_and_decode_3D_poc, num_parallel_calls=tf.data.experimental.AUTOTUNE).shuffle(buffer_size=buffer_size)
+    # test set, unbatched # TODO
+    test_dataset = tf.data.TFRecordDataset(os.path.join(data_path, TEST, CARMHEAD_2D_TFRECORDS_TEST))
+    teds = test_dataset.map(_decode_test_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
     teds = teds.repeat()
     teds = teds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
     return tds, vds, teds
 
 
-def generate_perceptual_dataset_from_3D(data_path, batch_size=1, buffer_size=1024):
-    file_paths = []
-
-    for folder, subs, files in os.walk(os.path.join(data_path, TRAIN)):
-        for filename in files:
-            file_paths.append(os.path.abspath(os.path.join(folder, filename)))
-    # np.random.random(file_paths)
-    train_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
-    val_dataset = tf.data.TFRecordDataset(os.path.join(data_path , VAL, CARMHEAD_2D_TFRECORDS_VAL))
-    test_dataset = tf.data.TFRecordDataset(os.path.join(data_path, TEST, CARMHEAD_2D_TFRECORDS_TEST))
-
-    tds = train_dataset.map(_read_and_decode_3D_poc, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    tds = tds.unbatch()
-    tds = tds.shuffle(buffer_size=buffer_size)
-    tds = tds.map(augment_prior)
-    tds = tds.batch(batch_size=batch_size)
-    tds = tds.repeat()
-    tds = tds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-
-    vds = val_dataset.map(_read_and_decode_3D_poc, num_parallel_calls=tf.data.experimental.AUTOTUNE).batch(batch_size=batch_size)
-    vds = vds.map(insert_needle)
-    vds = vds.repeat()
-    vds = vds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-
-    teds = test_dataset.map(_read_and_decode_3D_poc, num_parallel_calls=tf.data.experimental.AUTOTUNE).shuffle(buffer_size=buffer_size)
-    teds = teds.repeat()
-    teds = teds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-
-    return tds, vds, teds
-
-
-def _read_and_decode(example_proto):
-
-    feature = tf.io.parse_single_example(
-        example_proto,
-        features={
-            'name': tf.io.FixedLenFeature([], tf.string),
-            'img': tf.io.FixedLenFeature([], tf.string),
-            'gt': tf.io.FixedLenFeature([], tf.string)
-        })
-
-    start = (IMG_DIM_ORIG_2D[0] - IMG_DIM_INP_2D[0]) // 2
-
-    image = tf.io.decode_raw(feature['img'], tf.float16)
-    annotation = tf.io.decode_raw(feature['gt'], tf.float16)
-    image= tf.reshape(image, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-    annotation = tf.reshape(annotation, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-    #return [384, 384, 1]
-    return annotation[start:start+IMG_DIM_INP_2D[0], start:start+IMG_DIM_INP_2D[1],:], \
-           image[start:start+IMG_DIM_INP_2D[0], start:start+IMG_DIM_INP_2D[1],:]
-
-
-# TODO: combine this with loading needle projections for joint reconstruction
-# TODO: load gt volume
-def _read_and_decode_3D_poc(example_proto):
-
+def _decode_projections(example_proto):
     feature = tf.io.parse_single_example(
         example_proto,
         features={
@@ -125,33 +94,50 @@ def _read_and_decode_3D_poc(example_proto):
     height = tf.io.decode_raw(feature['height'], tf.int64)
     angles = tf.io.decode_raw(feature['angles'], tf.int64)
 
-    projections = tf.reshape(projections, (width, height, angles))
-    num_sparse_projections = 36  # TODO
-    voxel_dims = (256, 256, 128)  # TODO
-    voxel_size = (1.0, 1.0, 1.0)  # TODO
-    radon = create_radon(num_views=num_sparse_projections)
-    sparse_reco = reconstruct_volume_from_projections(
-        projections.numpy(), radon, voxel_dims, voxel_size)
-    sparse_reco = tf.convert_to_tensor(sparse_reco[..., None], tf.float32)  # TODO: transpose()?
-    return sparse_reco
+    return tf.reshape(projections, (width, height, angles))
 
-    # start = (IMG_DIM_ORIG_2D[0] - IMG_DIM_INP_2D[0]) // 2
-    
-    # image = tf.io.decode_raw(feature['img'], tf.float16)
-    # annotation = tf.io.decode_raw(feature['gt'], tf.float16)
 
-    # image = tf.reshape(image, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-    # annotation = tf.reshape(annotation, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-    # annotation = annotation[start:start + IMG_DIM_INP_2D[0], start:start + IMG_DIM_INP_2D[1], :]
-    # image = image[start:start + IMG_DIM_INP_2D[0], start:start + IMG_DIM_INP_2D[1], :]
+def _random_rotate_needle(ndl_projections: tf.Tensor):
+    return tf.roll(
+        ndl_projections,
+        tf.random.uniform(
+            shape=[],
+            minval=0,
+            maxval=ndl_projections.get_shape()[-1],  # 360
+            dtype=tf.int32,
+            seed=10),
+        -1)
 
-    # image = tf.repeat(tf.reshape(image, (1, IMG_DIM_INP_2D[0], IMG_DIM_INP_2D[1], 1)), repeats=128, axis=0)
-    # annotation = tf.repeat(tf.reshape(annotation, (1, IMG_DIM_INP_2D[0], IMG_DIM_INP_2D[1], 1)), repeats=128, axis=0)
 
-    #input = tf.concat((image, annotation), axis=-1)
-    #input = tf.reshape(input, (24, 2, 384, 384, 1))
-    #return [384, 384, 1]
-    # return image , annotation
+def _reconstruct_3D_poc(example_proto, full_radon: ConeBeam, sparse_radon: ConeBeam):
+    vol_projections, ndl_projections = example_proto
+    vol_projections = vol_projections.numpy()
+    ndl_projections = ndl_projections.numpy()
+
+    num_sparse_projections = len(sparse_radon.angles)
+    voxel_dims = (384, 384, 500)  # TODO
+    voxel_size = (0.48828125, 0.48828125, 0.3515625)  # TODO
+
+    # create reconstruction of prior volume
+    prior_reco = reconstruct_volume_from_projections(
+        vol_projections, full_radon, voxel_dims, voxel_size)
+    prior_reco = tf.convert_to_tensor(prior_reco, tf.float32)
+
+    # create interventional projections
+    vol_ndl_projections = vol_projections + ndl_projections
+
+    # create reconstruction of interventional volume w/ all projections
+    full_with_needle = reconstruct_volume_from_projections(
+        vol_ndl_projections, full_radon, voxel_dims, voxel_size)
+    full_with_needle = tf.convert_to_tensor(full_with_needle, tf.float32)
+
+    # create reconstruction of interventional volume w/ sparse projections
+    sparse_with_needle = reconstruct_volume_from_projections(
+        vol_ndl_projections[..., ::vol_ndl_projections.shape[-1]//num_sparse_projections],
+        sparse_radon, voxel_dims, voxel_size)
+    sparse_with_needle = tf.convert_to_tensor(sparse_with_needle, tf.float32)
+    # return [sparse_with_needle, prior_reco], full_with_needle
+    return tf.stack((sparse_with_needle, prior_reco, full_with_needle), -1)
 
 
 def create_radon(num_views: int) -> ConeBeam:
@@ -179,7 +165,7 @@ def reconstruct_volume_from_projections(projections: np.ndarray, radon: ConeBeam
                                         voxel_size: Tuple[float, float, float]) \
                                         -> np.ndarray:
     """
-    returns reconstruction of input projections in HU
+    returns reconstruction of input projections in HU, [z, y, x]
     """
     assert len(radon.angles) == projections.shape[-1]
     radon.volume = Volume3D(
@@ -193,12 +179,12 @@ def reconstruct_volume_from_projections(projections: np.ndarray, radon: ConeBeam
     det_dist = radon.projection.cfg.d_dist
     src_det_dist = src_dist + det_dist
 
-    projections_t = torch.from_numpy(projections).float().cuda()
-    projections_t = projections_t.transpose()[None, None, ...]
+    projections_t = torch.from_numpy(projections.transpose()).float().cuda()
+    projections_t = projections_t[None, None, ...]
     reco_t = radon.backprojection(filter_sinogram_3d(projections_t, 'hann'))
     reco_t = reco_t*det_spacing_v/src_det_dist*src_dist  # cone beam correction
     reco_t = mu2hu(reco_t, 0.02)
-    return reco_t[0, 0].cpu().numpy()  # TODO: [x,y,z] or [z,y,x]?
+    return reco_t[0, 0].cpu().numpy().transpose()
 
 
 def generate_tf_records(data_path, save_path, create_tf_record=[True, True, True]):
