@@ -25,13 +25,36 @@ def _bytes_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
+def test_reconstruction():
+    file_paths = ['/mnt/nvme2/mayoclinic/Head/high_dose_projections/N005c.tfrecord']
+    volumes_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
+    vol_ds = volumes_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+
+    file_paths = ['/home/phernst/Documents/git/ictdl/needle_projections/Needle2_Pos2_12.tfrecord']
+    needle_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
+    ndl_ds = needle_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    ndl_ds = ndl_ds.map(lambda x, _y, _z: x, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+
+    full_radon = create_radon(360)
+    sparse_radon = create_radon(18)  # TODO
+    def patched_reco_fn(vol_example, ndl_example):
+        return _reconstruct_3D_poc((vol_example, ndl_example), full_radon, sparse_radon)
+
+    tds = tf.data.Dataset.zip((vol_ds, ndl_ds))
+    tds = tds.map(lambda x, y: tf.py_function(func=patched_reco_fn, inp=[x, y], Tout=tf.float32),
+                  num_parallel_calls=tf.data.experimental.AUTOTUNE)
+
+    input_tensor = next(iter(tds))
+    print(input_tensor)
+
+
 def generate_datasets(data_path, batch_size=1, buffer_size=1024):
     file_paths = []
     for folder, subs, files in os.walk(os.path.join(data_path, TRAIN)):
         for filename in files:
             file_paths.append(os.path.abspath(os.path.join(folder, filename)))
     volumes_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
-    vol_ds = volumes_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [w, h, 360]
+    vol_ds = volumes_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # ([w, h, 360], [3], [3])
     vol_ds = vol_ds.repeat()
     vol_ds = vol_ds.shuffle(buffer_size=buffer_size)
 
@@ -40,7 +63,8 @@ def generate_datasets(data_path, batch_size=1, buffer_size=1024):
         for filename in files:
             file_paths.append(os.path.abspath(os.path.join(folder, filename)))
     needle_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
-    ndl_ds = needle_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360]
+    ndl_ds = needle_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # ([u, v, 360], [3], [3])
+    ndl_ds = ndl_ds.map(lambda x: x[0], num_parallel_calls=tf.data.experimental.AUTOTUNE) # [u, v, 360]
     ndl_ds = ndl_ds.map(_random_rotate_needle, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360]
     ndl_ds = ndl_ds.repeat()
     ndl_ds = ndl_ds.shuffle(buffer_size=buffer_size)
@@ -51,7 +75,7 @@ def generate_datasets(data_path, batch_size=1, buffer_size=1024):
         return _reconstruct_3D_poc(example_proto, full_radon, sparse_radon)
 
     # training set
-    tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # ([u, v, 360], [u, v, 360])
+    tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # (([u, v, 360], [3], [3]), [u, v, 360])
     tds = tds.map(patched_reco_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
     tds = tds.map(augment_prior)  # ([[h, w], [h, w]], [h, w])
@@ -80,21 +104,38 @@ def _decode_projections(example_proto):
         example_proto,
         features={
             'projections': tf.io.FixedLenFeature([], tf.string),
-            'pixel_spacing_u': tf.io.FixedLenFeature([], tf.string),
-            'pixel_spacing_v': tf.io.FixedLenFeature([], tf.string),
-            'width': tf.io.FixedLenFeature([], tf.string),
-            'height': tf.io.FixedLenFeature([], tf.string),
-            'angles': tf.io.FixedLenFeature([], tf.string),
+            'pixel_spacing_u': tf.io.FixedLenFeature([], tf.float32),
+            'pixel_spacing_v': tf.io.FixedLenFeature([], tf.float32),
+            'voxel_spacing_x': tf.io.FixedLenFeature([], tf.float32),
+            'voxel_spacing_y': tf.io.FixedLenFeature([], tf.float32),
+            'voxel_spacing_z': tf.io.FixedLenFeature([], tf.float32),
+            'volume_depth': tf.io.FixedLenFeature([], tf.int64),
+            'volume_height': tf.io.FixedLenFeature([], tf.int64),
+            'volume_width': tf.io.FixedLenFeature([], tf.int64),
+            'width': tf.io.FixedLenFeature([], tf.int64),
+            'height': tf.io.FixedLenFeature([], tf.int64),
+            'angles': tf.io.FixedLenFeature([], tf.int64),
         })
 
     projections = tf.io.decode_raw(feature['projections'], tf.float32)
     # pixel_spacing_u = tf.io.decode_raw(feature['pixel_spacing_u'], tf.float32)
     # pixel_spacing_v = tf.io.decode_raw(feature['pixel_spacing_v'], tf.float32)
-    width = tf.io.decode_raw(feature['width'], tf.int64)
-    height = tf.io.decode_raw(feature['height'], tf.int64)
-    angles = tf.io.decode_raw(feature['angles'], tf.int64)
+    width = feature['width']
+    height = feature['height']
+    angles = feature['angles']
+    voxel_spacing = (
+        feature['voxel_spacing_x'],
+        feature['voxel_spacing_y'],
+        feature['voxel_spacing_z'],
+    )
+    volume_shape = (
+        feature['volume_depth'],
+        feature['volume_height'],
+        feature['volume_width'],
+    )
 
-    return tf.reshape(projections, (width, height, angles))
+    return tf.reshape(projections, (width, height, angles)), \
+        voxel_spacing, volume_shape
 
 
 def _random_rotate_needle(ndl_projections: tf.Tensor):
@@ -110,13 +151,13 @@ def _random_rotate_needle(ndl_projections: tf.Tensor):
 
 
 def _reconstruct_3D_poc(example_proto, full_radon: ConeBeam, sparse_radon: ConeBeam):
-    vol_projections, ndl_projections = example_proto
+    (vol_projections, voxel_size, volume_shape), ndl_projections = example_proto
     vol_projections = vol_projections.numpy()
     ndl_projections = ndl_projections.numpy()
 
     num_sparse_projections = len(sparse_radon.angles)
-    voxel_dims = (384, 384, 500)  # TODO
-    voxel_size = (0.48828125, 0.48828125, 0.3515625)  # TODO
+    voxel_dims = (384, 384, volume_shape[0])  # TODO
+    # voxel_size = (0.48828125, 0.48828125, 0.3515625)  # TODO
 
     # create reconstruction of prior volume
     prior_reco = reconstruct_volume_from_projections(
@@ -169,9 +210,9 @@ def reconstruct_volume_from_projections(projections: np.ndarray, radon: ConeBeam
     """
     assert len(radon.angles) == projections.shape[-1]
     radon.volume = Volume3D(
-            depth=voxel_dims[0],
+            depth=voxel_dims[2],
             height=voxel_dims[1],
-            width=voxel_dims[2],
+            width=voxel_dims[0],
             voxel_size=voxel_size)
 
     det_spacing_v = radon.projections.cfg.det_spacing_v
@@ -306,3 +347,7 @@ def generate_tf_records(data_path, save_path, create_tf_record=[True, True, True
                         'gt': _bytes_feature(annotation_raw)}))
                     writer.write(example.SerializeToString())
     print('created tf-records for test set')
+
+
+if __name__ == '__main__':
+    test_reconstruction()
