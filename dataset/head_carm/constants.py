@@ -24,6 +24,8 @@ IMG_DIM_INP_2D = (384, 384, 1)
 # Load dataset
 IMGS_2D_SHARDS_PATH = '/project/sghosh/dataset/carm_head/tf_shards/'
 IMGS_2D_DCT_SHARDS_PATH = '/project/sghosh/dataset/carm_head/dct/tf_shards/'
+HEAD_PROJECTIONS: str = '/project/sghosh/dataset/mayoclinic/Head/high_dose_projections/cone-beam/'
+NEEDLE_PROJECTIONS: str = '/project/sghosh/dataset/mayoclinic/Head/high_dose_projections/needles/'
 
 CARMH_IMG_LOW_5_PERCENTILE = -1000.0
 CARMH_IMG_UPPER_99_PERCENTILE = 1406.5560302734375

@@ -1,11 +1,14 @@
+import json
 import os
-from typing import Tuple
+import random
+from typing import List, Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
 import torch
 from torch_radon import ConeBeam
 from torch_radon.volumes import Volume3D
+from tqdm import tqdm
 
 from dataset.head_carm.constants import *
 from utility.ct_utils import mu2hu, filter_sinogram_3d
@@ -21,8 +24,13 @@ TRAIN = 'train'
 VAL = 'val'
 TEST = 'test'
 
+
 def _bytes_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+
+def _int64_feature(value):
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
 
 def _tensorize(vol_example: Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor, tf.Tensor]],
@@ -367,5 +375,84 @@ def generate_tf_records(data_path, save_path, create_tf_record=[True, True, True
     print('created tf-records for test set')
 
 
+def generate_train_valid_test_split(subject_directory: str):
+    all_subjects = [f[:f.index('.')] for f in os.listdir(subject_directory)]
+    random.shuffle(all_subjects)
+    train_subjects = all_subjects[:35]
+    valid_subjects = all_subjects[35:35+8]
+    test_subjects = all_subjects[-7:]
+    with open('train_valid_test.json', 'w') as file_handle:
+        json.dump({
+            'train_subjects': train_subjects,
+            'valid_subjects': valid_subjects,
+            'test_subjects': test_subjects,
+        }, file_handle)
+
+
+def generate_validation_record(subject_list: List[str], out_path: str,
+                               subject_dir: Optional[str] = None,
+                               needle_dir: Optional[str] = None):
+    subject_dir = HEAD_PROJECTIONS if subject_dir is None else subject_dir
+    needle_dir = NEEDLE_PROJECTIONS if needle_dir is None else needle_dir
+    needle_files = [n for n in os.listdir(needle_dir) if n.endswith('.tfrecord')]
+    subject_needle_combinations = [
+        (x+'.tfrecord', y) for x in subject_list for y in needle_files
+    ]
+
+    full_radon = create_radon(360)
+    sparse_radon = create_radon(18)  # TODO
+    def patched_reco_fn(vol0, vol1, vol2, ndl_example):
+        return _reconstruct_3D_poc(((vol0, vol1, vol2), ndl_example), full_radon, sparse_radon)
+
+    for subject_file, needle_file in tqdm(subject_needle_combinations):
+        out_file = f'{subject_file[:subject_file.index(".")]}_' \
+            f'{needle_file[:needle_file.index(".")]}.tfrecord'
+        with tf.io.TFRecordWriter(os.path.join(out_path, out_file)) as writer:
+            subject_ds = tf.data.TFRecordDataset([os.path.join(subject_dir, subject_file)])
+            subject_ds = subject_ds.map(_decode_projections)
+
+            needle_ds = tf.data.TFRecordDataset([os.path.join(needle_dir, needle_file)])
+            needle_ds = needle_ds.map(_decode_projections)
+            needle_ds = needle_ds.map(lambda x, _y, _z: x)
+
+            # training set
+            tds = tf.data.Dataset.zip((subject_ds, needle_ds))
+            tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+            tds = tds.map(lambda x0, x1, x2, y: tf.py_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
+                            num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
+            reco_tensor = next(iter(tds)).numpy()
+            reco_shape = reco_tensor.shape
+
+            example = tf.train.Example(features=tf.train.Features(feature={
+                'reco_tensor': _bytes_feature(value=reco_tensor.tobytes()),
+                'depth': _int64_feature(reco_shape[0]),
+                'height': _int64_feature(reco_shape[1]),
+                'width': _int64_feature(reco_shape[2]),
+                'subject_file':  _bytes_feature(subject_file.encode('utf-8')),
+                'needle_file':  _bytes_feature(needle_file.encode('utf-8')),
+            }))
+            writer.write(example.SerializeToString())
+
+
+def create_validation_set_record():
+    with open('train_valid_test.json', 'r') as file_handle:
+        valid_subjects = json.load(file_handle)['valid_subjects']
+    generate_validation_record(
+        valid_subjects,
+        'ds_validation',
+        subject_dir='/mnt/nvme2/mayoclinic/Head/high_dose_projections',
+        needle_dir='/home/phernst/Documents/git/ictdl/needle_projections')
+
+
+def create_test_set_record():
+    with open('train_valid_test.json', 'r') as file_handle:
+        test_subjects = json.load(file_handle)['test_subjects']
+    generate_validation_record(
+        test_subjects,
+        'ds_test',
+        subject_dir='/mnt/nvme2/mayoclinic/Head/high_dose_projections',
+        needle_dir='/home/phernst/Documents/git/ictdl/needle_projections')
+
+
 if __name__ == '__main__':
-    test_reconstruction()
+    create_validation_set_record()

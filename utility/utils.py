@@ -19,28 +19,28 @@ def ssim(dim, paddings=None):
     return masked_ssim
 
 def psnr(dim, paddings=None):
-        def masked_psnr(y_true, y_pred):
-            if paddings is not None:
-                temp = tf.constant(value=1.0, shape=dim)
-                mask = tf.pad(temp, paddings=paddings)
-                y_true = mask * y_true
-                y_pred = mask * y_pred
-            psnr = tf.image.psnr(y_true, y_pred, max_val=1.)
-            return psnr
+    def masked_psnr(y_true, y_pred):
+        if paddings is not None:
+            temp = tf.constant(value=1.0, shape=dim)
+            mask = tf.pad(temp, paddings=paddings)
+            y_true = mask * y_true
+            y_pred = mask * y_pred
+        psnr = tf.image.psnr(y_true, y_pred, max_val=1.)
+        return psnr
 
-        return masked_psnr
+    return masked_psnr
 
 def mse(dim, paddings=None, weight=1):
-        def masked_mse(y_true, y_pred):
-            if paddings is not None:
-                temp = tf.constant(value=1.0, shape=dim)
-                mask = tf.pad(temp, paddings=paddings)
-                y_true = mask * y_true
-                y_pred = mask * y_pred
-            mse_val = tf.metrics.mean_squared_error(y_pred, y_true)
-            return weight * mse_val
+    def masked_mse(y_true, y_pred):
+        if paddings is not None:
+            temp = tf.constant(value=1.0, shape=dim)
+            mask = tf.pad(temp, paddings=paddings)
+            y_true = mask * y_true
+            y_pred = mask * y_pred
+        mse_val = tf.metrics.mean_squared_error(y_pred, y_true)
+        return weight * mse_val
 
-        return masked_mse
+    return masked_mse
 
 
 def augment_prior(input_tensor: tf.Tensor):
@@ -74,7 +74,6 @@ def augment_prior(input_tensor: tf.Tensor):
 
 def _get_needle_numpy(needle_type):
     #circle_flag = np.random.randint(0, 1)
-    needle_type
     image_shape = (384, 384, 1)
     x = image_shape[0]
     y = image_shape[1]
@@ -109,47 +108,47 @@ def _get_needle_tensor(needle_type: tf.Tensor):
 
 @tf.function
 def insert_needle(image: tf.Tensor, annotation: tf.Tensor):
-        image = tf.cast(image, dtype=tf.float32)
-        annotation = tf.cast(annotation, dtype=tf.float32)
-        prior = tf.cast(annotation, dtype=tf.float32)
-        #needle = _get_needle_tensor(tf.random.uniform(minval=0, maxval=2, dtype=tf.int32))
-        needle = _get_needle_tensor(tf.constant(0, dtype=tf.int32))
-        image = tf.where(needle > 0., tf.random.uniform(shape=[], minval=0.9,maxval=1.5, dtype=tf.float32), image)
-        annotation = tf.where(needle > 0, 1.0, annotation)
-        return [image, prior], annotation
+    image = tf.cast(image, dtype=tf.float32)
+    annotation = tf.cast(annotation, dtype=tf.float32)
+    prior = tf.cast(annotation, dtype=tf.float32)
+    #needle = _get_needle_tensor(tf.random.uniform(minval=0, maxval=2, dtype=tf.int32))
+    needle = _get_needle_tensor(tf.constant(0, dtype=tf.int32))
+    image = tf.where(needle > 0., tf.random.uniform(shape=[], minval=0.9,maxval=1.5, dtype=tf.float32), image)
+    annotation = tf.where(needle > 0, 1.0, annotation)
+    return [image, prior], annotation
 
 
 @tf.function
 def _rotate(image: tf.Tensor, angle: tf.Tensor):
-        return tfa.image.rotate(image, angle, interpolation='BILINEAR')
+    return tfa.image.rotate(image, angle, interpolation='BILINEAR')
 
 @tf.function
 def _translate(image: tf.Tensor):
-        x = tf.random.uniform(minval=-50, maxval=50, dtype=tf.int32, shape=[])
-        y = tf.random.uniform(minval=-50, maxval=50, dtype=tf.int32, shape=[])
-        return tfa.image.translate(image, [x,y], interpolation='nearest', fill_mode= 'constant', fill_value = 0.0)
+    x = tf.random.uniform(minval=-50, maxval=50, dtype=tf.int32, shape=[])
+    y = tf.random.uniform(minval=-50, maxval=50, dtype=tf.int32, shape=[])
+    return tfa.image.translate(image, [x,y], interpolation='nearest', fill_mode= 'constant', fill_value = 0.0)
 
 @tf.function
 def _flip(image: tf.Tensor):
-        return tf.image.flip_left_right(image)
+    return tf.image.flip_left_right(image)
 
 @tf.function
 def _flip_rotate(image: tf.Tensor, angle: tf.Tensor):
-        image = tf.image.flip_left_right(image)
-        return tfa.image.rotate(image, angle, interpolation='BILINEAR')
+    image = tf.image.flip_left_right(image)
+    return tfa.image.rotate(image, angle, interpolation='BILINEAR')
 
 @tf.function
 def _scale(image: tf.Tensor, ratio: tf.Tensor, dim=[384, 384, 1]):
-        print(ratio)
-        x1 = y1 = 0.5 - (0.5 * ratio)
-        x2 = y2 = 0.5 + (0.5 * ratio)
-        boxes = [x1,y1,x2,y2]
-        boxes = tf.cast(tf.reshape(boxes, shape=(1,4)), dtype=tf.float32)
-        scaled = tf.image.crop_and_resize([image], boxes=boxes, box_indices=tf.zeros(1, dtype=tf.int32),
-                                         crop_size=(dim[0], dim[1]))
-        scaled = tf.reshape(scaled, shape=(dim[0], dim[1], dim[2]))
-        #return tf.cast(scaled, dtype=tf.float16)
-        return scaled
+    print(ratio)
+    x1 = y1 = 0.5 - (0.5 * ratio)
+    x2 = y2 = 0.5 + (0.5 * ratio)
+    boxes = [x1,y1,x2,y2]
+    boxes = tf.cast(tf.reshape(boxes, shape=(1,4)), dtype=tf.float32)
+    scaled = tf.image.crop_and_resize([image], boxes=boxes, box_indices=tf.zeros(1, dtype=tf.int32),
+                                        crop_size=(dim[0], dim[1]))
+    scaled = tf.reshape(scaled, shape=(dim[0], dim[1], dim[2]))
+    #return tf.cast(scaled, dtype=tf.float16)
+    return scaled
 
 
 def lr_scheduler_linear(epoch, lr):
@@ -161,18 +160,18 @@ def lr_scheduler_linear(epoch, lr):
     return lr
 
 def multiscale_ssim_l2(dim, weight=1, paddings=None, alpha=0.84):
-        def masked_mssim_l1(y_true, y_pred):
-            if paddings is not None:
-                temp = tf.constant(value=1.0, shape=dim)
-                mask = tf.pad(temp, paddings=paddings)
-                y_true = mask * y_true
-                y_pred = mask * y_pred
-            ms_ssim = 1 - tf.image.ssim_multiscale(y_true, y_pred, max_val=1.)
-            l1 = tf.reduce_mean(tf.keras.metrics.MAE(y_true, y_pred), axis=(-1, -2))
-            loss = (alpha * ms_ssim) + ((1 - alpha) * l1)
-            return weight * loss
+    def masked_mssim_l1(y_true, y_pred):
+        if paddings is not None:
+            temp = tf.constant(value=1.0, shape=dim)
+            mask = tf.pad(temp, paddings=paddings)
+            y_true = mask * y_true
+            y_pred = mask * y_pred
+        ms_ssim = 1 - tf.image.ssim_multiscale(y_true, y_pred, max_val=1.)
+        l1 = tf.reduce_mean(tf.keras.metrics.MAE(y_true, y_pred), axis=(-1, -2))
+        loss = (alpha * ms_ssim) + ((1 - alpha) * l1)
+        return weight * loss
 
-        return masked_mssim_l1
+    return masked_mssim_l1
 
 
 def mssim(dim, weight=1., paddings=None):
