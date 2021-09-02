@@ -44,9 +44,9 @@ def mse(dim, paddings=None, weight=1):
 
 
 def augment_prior(input_tensor: tf.Tensor):
-    sparse_reco = input_tensor[..., 0]
-    prior = input_tensor[..., 1]
-    full_reco = input_tensor[..., 2]
+    sparse_reco = input_tensor[..., 0:1]
+    prior = input_tensor[..., 1:2]
+    full_reco = input_tensor[..., 2:3]
 
     sparse_reco = tf.cast(sparse_reco, dtype=tf.float32)
     prior = tf.cast(prior, dtype=tf.float32)

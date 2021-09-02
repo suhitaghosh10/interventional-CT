@@ -25,6 +25,11 @@ def _bytes_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
+def _tensorize(vol_example: Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor, tf.Tensor]],
+               ndl_example: tf.Tensor):
+    return vol_example[0], tf.stack(vol_example[1]), tf.stack(vol_example[2]), ndl_example
+
+
 def test_reconstruction():
     file_paths = ['/mnt/nvme2/mayoclinic/Head/high_dose_projections/N005c.tfrecord']
     volumes_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
@@ -37,20 +42,32 @@ def test_reconstruction():
 
     full_radon = create_radon(360)
     sparse_radon = create_radon(18)  # TODO
-    def patched_reco_fn(vol_example, ndl_example):
-        return _reconstruct_3D_poc((vol_example, ndl_example), full_radon, sparse_radon)
+    def patched_reco_fn(vol0, vol1, vol2, ndl_example):
+        return _reconstruct_3D_poc(((vol0, vol1, vol2), ndl_example), full_radon, sparse_radon)
 
     tds = tf.data.Dataset.zip((vol_ds, ndl_ds))
-    tds = tds.map(lambda x, y: tf.py_function(func=patched_reco_fn, inp=[x, y], Tout=tf.float32),
+    tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    tds = tds.map(lambda x0, x1, x2, y: tf.py_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
                   num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    tds = tds.unbatch()  # [h, w, 3]
+    tds = tds.map(augment_prior)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
+    tds = tds.shuffle(buffer_size=100)
+    tds = tds.batch(3)
+    tds = tds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    input_tensor = next(iter(tds))
-    print(input_tensor)
+    iter_tds = iter(tds)
+    _ = next(iter_tds)
+    from time import time
+    t0 = time()
+    num_iterations: int = 100
+    for _ in range(num_iterations):
+        _ = next(iter_tds)
+    print(f'{(time() - t0)/num_iterations}s per batch')
 
 
 def generate_datasets(data_path, batch_size=1, buffer_size=1024):
     file_paths = []
-    for folder, subs, files in os.walk(os.path.join(data_path, TRAIN)):
+    for folder, _, files in os.walk(os.path.join(data_path, HEAD_PROJECTIONS)):
         for filename in files:
             file_paths.append(os.path.abspath(os.path.join(folder, filename)))
     volumes_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
@@ -59,7 +76,7 @@ def generate_datasets(data_path, batch_size=1, buffer_size=1024):
     vol_ds = vol_ds.shuffle(buffer_size=buffer_size)
 
     file_paths = []
-    for folder, subs, files in os.walk(os.path.join(data_path, NEEDLE_PROJECTIONS)):
+    for folder, _, files in os.walk(os.path.join(data_path, NEEDLE_PROJECTIONS)):
         for filename in files:
             file_paths.append(os.path.abspath(os.path.join(folder, filename)))
     needle_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
@@ -71,12 +88,14 @@ def generate_datasets(data_path, batch_size=1, buffer_size=1024):
 
     full_radon = create_radon(360)
     sparse_radon = create_radon(18)  # TODO
-    def patched_reco_fn(example_proto):
-        return _reconstruct_3D_poc(example_proto, full_radon, sparse_radon)
+    def patched_reco_fn(vol0, vol1, vol2, ndl_example):
+        return _reconstruct_3D_poc(((vol0, vol1, vol2), ndl_example), full_radon, sparse_radon)
 
     # training set
     tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # (([u, v, 360], [3], [3]), [u, v, 360])
-    tds = tds.map(patched_reco_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
+    tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    tds = tds.map(lambda x0, x1, x2, y: tf.py_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
+                  num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
     tds = tds.map(augment_prior)  # ([[h, w], [h, w]], [h, w])
     tds = tds.shuffle(buffer_size=buffer_size)
@@ -92,7 +111,7 @@ def generate_datasets(data_path, batch_size=1, buffer_size=1024):
 
     # test set, unbatched # TODO
     test_dataset = tf.data.TFRecordDataset(os.path.join(data_path, TEST, CARMHEAD_2D_TFRECORDS_TEST))
-    teds = test_dataset.map(_decode_test_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    teds = test_dataset.map(_decode_validation_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
     teds = teds.repeat()
     teds = teds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
@@ -157,7 +176,6 @@ def _reconstruct_3D_poc(example_proto, full_radon: ConeBeam, sparse_radon: ConeB
 
     num_sparse_projections = len(sparse_radon.angles)
     voxel_dims = (384, 384, volume_shape[0])  # TODO
-    # voxel_size = (0.48828125, 0.48828125, 0.3515625)  # TODO
 
     # create reconstruction of prior volume
     prior_reco = reconstruct_volume_from_projections(
@@ -215,7 +233,7 @@ def reconstruct_volume_from_projections(projections: np.ndarray, radon: ConeBeam
             width=voxel_dims[0],
             voxel_size=voxel_size)
 
-    det_spacing_v = radon.projections.cfg.det_spacing_v
+    det_spacing_v = radon.projection.cfg.det_spacing_v
     src_dist = radon.projection.cfg.s_dist
     det_dist = radon.projection.cfg.d_dist
     src_det_dist = src_dist + det_dist
