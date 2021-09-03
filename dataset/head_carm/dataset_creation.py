@@ -13,7 +13,6 @@ from tqdm import tqdm
 from dataset.head_carm.constants import *
 from utility.ct_utils import mu2hu, filter_sinogram_3d
 from utility.utils import augment_prior
-from utility.den_utils import read_den_volume
 from utility.ict_system import ArtisQSystem, DetectorBinning
 
 CARMHEAD_2D_TFRECORDS_TRAIN = 'carmhead.tfrecords.train'
@@ -247,127 +246,6 @@ def reconstruct_volume_from_projections(projections: np.ndarray, radon: ConeBeam
     reco_t = reco_t*det_spacing_v/src_det_dist*src_dist  # cone beam correction
     reco_t = mu2hu(reco_t, 0.02)
     return reco_t[0, 0].cpu().numpy().transpose()
-
-
-def generate_tf_records(data_path, save_path, create_tf_record=[True, True, True]):
-    z_start = 80
-    z_end = 395
-    print('start creating tf-records')
-    if create_tf_record[0]:
-        train_shards_path = os.path.join(save_path, TRAIN)
-        print('create shards')
-        with tf.io.TFRecordWriter(os.path.join(save_path, CARMHEAD_2D_TFRECORDS_TRAIN)) as writer:
-            path = os.path.join(data_path, TRAIN)
-            files = os.listdir(path)
-            for filename in files:
-                print(filename)
-                vol = read_den_volume(os.path.join(data_path, TRAIN, filename, 'vol.den'), block=4,
-                                 type=np.dtype('<f4')).astype(np.float16)
-                vol_15 = read_den_volume(os.path.join(data_path, TRAIN, filename, 'vol_15.den'), block=4,
-                                    type=np.dtype('<f4')).astype(np.float16)
-                # slices = vol.shape[0]
-
-                for slice in range(z_start, z_end):
-                    image = np.clip(vol[:, :, slice], a_min=CARMH_IMG_LOW_5_PERCENTILE,
-                                    a_max=CARMH_IMG_UPPER_99_PERCENTILE)
-                    image = (image - CARMH_IMG_LOW_5_PERCENTILE) / (
-                            CARMH_IMG_UPPER_99_PERCENTILE - CARMH_IMG_LOW_5_PERCENTILE)
-                    # print(image.shapes)
-                    image = np.reshape(image, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-                    # np.save(os.path.join(save_path,'img.npy'), image)
-                    annotation = np.clip(vol_15[:, :, slice], a_min=CARMH_GT_LOW_5_PERCENTILE,
-                                         a_max=CARMH_GT_UPPER_99_PERCENTILE)
-                    annotation = (annotation - CARMH_GT_LOW_5_PERCENTILE) / (
-                            CARMH_GT_UPPER_99_PERCENTILE - CARMH_GT_LOW_5_PERCENTILE)
-                    annotation = np.reshape(annotation, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-                    # np.save(os.path.join(save_path, 'ann.npy'), annotation)
-                    img_raw = image.tostring()
-                    annotation_raw = annotation.tostring()
-
-                    example = tf.train.Example(features=tf.train.Features(feature={
-                        'img': _bytes_feature(img_raw),
-                        'name': _bytes_feature(tf.compat.as_bytes(filename + '_s' + str(slice))),
-                        'gt': _bytes_feature(annotation_raw)}))
-                    writer.write(example.SerializeToString())
-        # # creating shards
-        print('training tf record created')
-        shards_num = 25
-        raw_dataset = tf.data.TFRecordDataset(os.path.join(save_path, CARMHEAD_2D_TFRECORDS_TRAIN))
-        for shard_idx in range(shards_num):
-            writer = tf.data.experimental.TFRecordWriter(f"{train_shards_path}/w-{shard_idx}.tfrecord")
-            writer.write(raw_dataset.shard(shards_num, shard_idx))
-        print('created tf-record shards for training set')
-
-    if create_tf_record[1]:
-        with tf.io.TFRecordWriter(os.path.join(save_path, VAL, CARMHEAD_2D_TFRECORDS_VAL)) as writer:
-            path = os.path.join(data_path, VAL)
-            files = os.listdir(path)
-            print(files)
-            for filename in files:
-                print(filename)
-                vol = read_den_volume(os.path.join(data_path, VAL, filename, 'vol.den'), block=4,
-                                 type=np.dtype('<f4')).astype(np.float16)
-                vol_15 = read_den_volume(os.path.join(data_path, VAL, filename, 'vol_15.den'), block=4,
-                                    type=np.dtype('<f4')).astype(np.float16)
-
-                for slice in range(z_start, z_end):
-                    image = np.clip(vol[:, :, slice], a_min=CARMH_IMG_LOW_5_PERCENTILE,
-                                    a_max=CARMH_IMG_UPPER_99_PERCENTILE)
-                    image = (image - CARMH_IMG_LOW_5_PERCENTILE) / (
-                            CARMH_IMG_UPPER_99_PERCENTILE - CARMH_IMG_LOW_5_PERCENTILE)
-                    # print(image.shapes)
-                    image = np.reshape(image, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-
-                    annotation = np.clip(vol_15[:, :, slice], a_min=CARMH_GT_LOW_5_PERCENTILE,
-                                         a_max=CARMH_GT_UPPER_99_PERCENTILE)
-                    annotation = (annotation - CARMH_GT_LOW_5_PERCENTILE) / (
-                            CARMH_GT_UPPER_99_PERCENTILE - CARMH_GT_LOW_5_PERCENTILE)
-                    annotation = np.reshape(annotation, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-
-                    img_raw = image.tostring()
-                    annotation_raw = annotation.tostring()
-
-                    example = tf.train.Example(features=tf.train.Features(feature={
-                        'img': _bytes_feature(img_raw),
-                        'name': _bytes_feature(tf.compat.as_bytes(filename + '_s' + str(slice))),
-                        'gt': _bytes_feature(annotation_raw)}))
-                    writer.write(example.SerializeToString())
-        print('created tf-records for val set')
-
-    if create_tf_record[2]:
-        with tf.io.TFRecordWriter(os.path.join(save_path, TEST, CARMHEAD_2D_TFRECORDS_TEST)) as writer:
-            path = os.path.join(data_path, TEST)
-            files = os.listdir(path)
-            for filename in files:
-                print(filename)
-                vol = read_den_volume(os.path.join(data_path, TEST, filename, 'vol.den'), block=4,
-                                 type=np.dtype('<f4')).astype(np.float16)
-                vol_15 = read_den_volume(os.path.join(data_path, TEST, filename, 'vol_15.den'), block=4,
-                                    type=np.dtype('<f4')).astype(np.float16)
-
-                for slice in range(z_start, z_end):
-                    image = np.clip(vol[:, :, slice], a_min=CARMH_IMG_LOW_5_PERCENTILE,
-                                    a_max=CARMH_IMG_UPPER_99_PERCENTILE)
-                    image = (image - CARMH_IMG_LOW_5_PERCENTILE) / (
-                            CARMH_IMG_UPPER_99_PERCENTILE - CARMH_IMG_LOW_5_PERCENTILE)
-                    # print(image.shapes)
-                    image = np.reshape(image, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-
-                    annotation = np.clip(vol_15[:, :, slice], a_min=CARMH_GT_LOW_5_PERCENTILE,
-                                         a_max=CARMH_GT_UPPER_99_PERCENTILE)
-                    annotation = (annotation - CARMH_GT_LOW_5_PERCENTILE) / (
-                            CARMH_GT_UPPER_99_PERCENTILE - CARMH_GT_LOW_5_PERCENTILE)
-                    annotation = np.reshape(annotation, (IMG_DIM_ORIG_2D[0], IMG_DIM_ORIG_2D[1], 1))
-
-                    img_raw = image.tostring()
-                    annotation_raw = annotation.tostring()
-
-                    example = tf.train.Example(features=tf.train.Features(feature={
-                        'img': _bytes_feature(img_raw),
-                        'name': _bytes_feature(tf.compat.as_bytes(filename + '_s' + str(slice))),
-                        'gt': _bytes_feature(annotation_raw)}))
-                    writer.write(example.SerializeToString())
-    print('created tf-records for test set')
 
 
 def generate_train_valid_test_split(subject_directory: str):
