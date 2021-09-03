@@ -3,6 +3,7 @@ import os
 import random
 from typing import List, Optional, Tuple
 
+import nibabel as nib
 import numpy as np
 import tensorflow as tf
 import torch
@@ -37,6 +38,10 @@ def _tensorize(vol_example: Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tens
     return vol_example[0], tf.stack(vol_example[1]), tf.stack(vol_example[2]), ndl_example
 
 
+def _tuplelize(tensor: tf.Tensor) -> Tuple[Tuple[tf.Tensor, tf.Tensor], tf.Tensor]:
+    return (tensor[..., 0:1], tensor[..., 1:2]), tensor[..., 2:3]
+
+
 def test_reconstruction():
     file_paths = ['/mnt/nvme2/mayoclinic/Head/high_dose_projections/N005c.tfrecord']
     volumes_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
@@ -56,14 +61,23 @@ def test_reconstruction():
     tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
     tds = tds.map(lambda x0, x1, x2, y: tf.numpy_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
                   num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))
     tds = tds.unbatch()  # [h, w, 3]
-    tds = tds.map(augment_prior)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
+    tds = tds.map(augment_prior)  # (([h, w, 1], [h, w, 1]), [h, w, 1])
     tds = tds.shuffle(buffer_size=100)
     tds = tds.batch(3)
     tds = tds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
     iter_tds = iter(tds)
-    _ = next(iter_tds)
+    (sparse_input, prior_input), full_input = next(iter_tds)
+
+    img = nib.Nifti1Image(sparse_input[0, ..., 0].numpy(), np.eye(4))
+    nib.save(img, 'sparse_with_needle.nii.gz')
+    img = nib.Nifti1Image(prior_input[0, ..., 0].numpy(), np.eye(4))
+    nib.save(img, 'prior_reco.nii.gz')
+    img = nib.Nifti1Image(full_input[0, ..., 0].numpy(), np.eye(4))
+    nib.save(img, 'full_with_needle.nii.gz')
+
     from time import time
     t0 = time()
     num_iterations: int = 100
@@ -72,23 +86,27 @@ def test_reconstruction():
     print(f'{(time() - t0)/num_iterations}s per batch')
 
 
-def generate_datasets(data_path, batch_size=1, buffer_size=1024):
-    file_paths = []
-    for folder, _, files in os.walk(os.path.join(data_path, HEAD_PROJECTIONS)):
-        for filename in files:
-            file_paths.append(os.path.abspath(os.path.join(folder, filename)))
+def generate_datasets(batch_size=1, buffer_size=1024):
+    with open('train_valid_test.json', 'r') as file_handle:
+        json_dict = json.load(file_handle)
+        train_subjects = json_dict['train_subjects']
+
+    file_paths = [
+        os.path.join(HEAD_PROJECTIONS, f'{tr}.tfrecord')
+        for tr in train_subjects
+    ]
     volumes_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
     vol_ds = volumes_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # ([w, h, 360], [3], [3])
     vol_ds = vol_ds.repeat()
     vol_ds = vol_ds.shuffle(buffer_size=buffer_size)
 
-    file_paths = []
-    for folder, _, files in os.walk(os.path.join(data_path, NEEDLE_PROJECTIONS)):
-        for filename in files:
-            file_paths.append(os.path.abspath(os.path.join(folder, filename)))
+    file_paths = [
+        os.path.join(NEEDLE_PROJECTIONS, filename)
+        for filename in os.listdir(NEEDLE_PROJECTIONS)
+    ]
     needle_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
     ndl_ds = needle_dataset.map(_decode_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # ([u, v, 360], [3], [3])
-    ndl_ds = ndl_ds.map(lambda x: x[0], num_parallel_calls=tf.data.experimental.AUTOTUNE) # [u, v, 360]
+    ndl_ds = ndl_ds.map(lambda x: x[0], num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360]
     ndl_ds = ndl_ds.map(_random_rotate_needle, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360]
     ndl_ds = ndl_ds.repeat()
     ndl_ds = ndl_ds.shuffle(buffer_size=buffer_size)
@@ -102,24 +120,37 @@ def generate_datasets(data_path, batch_size=1, buffer_size=1024):
     tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # (([u, v, 360], [3], [3]), [u, v, 360])
     tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
     tds = tds.map(lambda x0, x1, x2, y: tf.numpy_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
-                  num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
+                  num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [w, h, d, 3]
+    tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
-    tds = tds.map(augment_prior)  # ([[h, w], [h, w]], [h, w])
+    tds = tds.map(augment_prior)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
     tds = tds.shuffle(buffer_size=buffer_size)
     tds = tds.batch(batch_size)
     tds = tds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    # validation set # TODO
-    val_dataset = tf.data.TFRecordDataset(os.path.join(data_path , VAL, CARMHEAD_2D_TFRECORDS_VAL))
+    # validation set
+    file_paths = [
+        os.path.join(VALIDATION_RECORDS, filename)
+        for filename in os.listdir(VALIDATION_RECORDS)
+    ]
+    val_dataset = tf.data.TFRecordDataset(file_paths)
     vds = val_dataset.map(_decode_validation_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    vds = vds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
+    vds = vds.unbatch()  # [h, w, 3]
+    vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
     vds = vds.batch(batch_size=batch_size)
-    vds = vds.repeat()
     vds = vds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    # test set, unbatched # TODO
-    test_dataset = tf.data.TFRecordDataset(os.path.join(data_path, TEST, CARMHEAD_2D_TFRECORDS_TEST))
+    # test set, unbatched
+    file_paths = [
+        os.path.join(TEST_RECORDS, filename)
+        for filename in os.listdir(TEST_RECORDS)
+    ]
+    test_dataset = tf.data.TFRecordDataset(file_paths)
     teds = test_dataset.map(_decode_validation_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    teds = teds.repeat()
+    vds = vds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
+    vds = vds.unbatch()  # [h, w, 3]
+    vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
     teds = teds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
     return tds, vds, teds
@@ -162,6 +193,70 @@ def _decode_projections(example_proto):
 
     return tf.reshape(projections, (width, height, angles)), \
         voxel_spacing, volume_shape
+
+
+def _decode_validation_data(example_proto):
+    feature = tf.io.parse_single_example(
+        example_proto,
+        features={
+            'reco_tensor': tf.io.FixedLenFeature([], tf.string),
+            'depth': tf.io.FixedLenFeature([], tf.int64),
+            'height': tf.io.FixedLenFeature([], tf.int64),
+            'width': tf.io.FixedLenFeature([], tf.int64),
+            'subject_file': tf.io.FixedLenFeature([], tf.string),
+            'needle_file': tf.io.FixedLenFeature([], tf.string),
+        })
+
+    reco_tensor = tf.io.decode_raw(feature['reco_tensor'], tf.float32)
+    depth = feature['depth']
+    height = feature['height']
+    width = feature['width']
+    subject_file = feature['subject_file']
+    needle_file = feature['needle_file']
+
+    tensor = tf.reshape(reco_tensor, (depth, height, width, 3))
+    tensor = tf.transpose(tensor, perm=(2, 1, 0, 3))
+
+    return tensor, subject_file, needle_file
+
+
+def test_validation_data():
+    file_paths = [
+        '/home/phernst/Documents/git/interventional-CT/ds_validation/'
+        'N180c_Needle2_Pos1_11.tfrecord'
+    ]
+    # validation_ds = tf.data.TFRecordDataset(file_paths)
+    # validation_ds = validation_ds.map(_decode_validation_data)
+    # reco_tensor, subject_file, needle_file = next(iter(validation_ds))
+    # reco_tensor = reco_tensor.numpy()
+    # subject_file = subject_file.numpy().decode('utf-8')
+    # needle_file = needle_file.numpy().decode('utf-8')
+
+    # print(reco_tensor.shape, subject_file, needle_file)
+
+    # img = nib.Nifti1Image(reco_tensor[..., 0], np.eye(4))
+    # nib.save(img, 'sparse_with_needle.nii.gz')
+    # img = nib.Nifti1Image(reco_tensor[..., 1], np.eye(4))
+    # nib.save(img, 'prior_reco.nii.gz')
+    # img = nib.Nifti1Image(reco_tensor[..., 2], np.eye(4))
+    # nib.save(img, 'full_with_needle.nii.gz')
+
+    validation_ds = tf.data.TFRecordDataset(file_paths)
+    vds = validation_ds.map(_decode_validation_data)
+    vds = vds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
+    vds = vds.unbatch()  # [h, w, 3]
+    vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
+    vds = vds.batch(batch_size=3)
+    vds = vds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    (sparse_input, prior_input), full_input = next(iter(vds))
+    print(sparse_input.shape, prior_input.shape, full_input.shape)
+
+    img = nib.Nifti1Image(sparse_input[0, ..., 0].numpy(), np.eye(4))
+    nib.save(img, 'sparse_with_needle.nii.gz')
+    img = nib.Nifti1Image(prior_input[0, ..., 0].numpy(), np.eye(4))
+    nib.save(img, 'prior_reco.nii.gz')
+    img = nib.Nifti1Image(full_input[0, ..., 0].numpy(), np.eye(4))
+    nib.save(img, 'full_with_needle.nii.gz')
 
 
 def _random_rotate_needle(ndl_projections: tf.Tensor):
@@ -301,8 +396,8 @@ def generate_validation_record(subject_list: List[str], out_path: str,
                 'depth': _int64_feature(reco_shape[0]),
                 'height': _int64_feature(reco_shape[1]),
                 'width': _int64_feature(reco_shape[2]),
-                'subject_file':  _bytes_feature(subject_file.encode('utf-8')),
-                'needle_file':  _bytes_feature(needle_file.encode('utf-8')),
+                'subject_file': _bytes_feature(subject_file.encode('utf-8')),
+                'needle_file': _bytes_feature(needle_file.encode('utf-8')),
             }))
             writer.write(example.SerializeToString())
 
@@ -328,4 +423,4 @@ def create_test_set_record():
 
 
 if __name__ == '__main__':
-    create_validation_set_record()
+    test_reconstruction()

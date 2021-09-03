@@ -69,7 +69,7 @@ def augment_prior(input_tensor: tf.Tensor):
         sparse_reco, prior = _flip_rotate(sparse_reco, angle), _flip_rotate(prior, angle)
         full_reco = _flip_rotate(full_reco, angle)
 
-    return [sparse_reco, prior], full_reco
+    return (sparse_reco, prior), full_reco
 
 
 def _get_needle_numpy(needle_type):
@@ -120,13 +120,13 @@ def insert_needle(image: tf.Tensor, annotation: tf.Tensor):
 
 @tf.function
 def _rotate(image: tf.Tensor, angle: tf.Tensor):
-    return tfa.image.rotate(image, angle, interpolation='BILINEAR')
+    return tfa.image.rotate(image, angle, interpolation='BILINEAR', fill_value=-1000)
 
 @tf.function
 def _translate(image: tf.Tensor):
     x = tf.random.uniform(minval=-50, maxval=50, dtype=tf.int32, shape=[])
     y = tf.random.uniform(minval=-50, maxval=50, dtype=tf.int32, shape=[])
-    return tfa.image.translate(image, [x,y], interpolation='nearest', fill_mode= 'constant', fill_value = 0.0)
+    return tfa.image.translate(image, [x, y], interpolation='nearest', fill_value=-1000)
 
 @tf.function
 def _flip(image: tf.Tensor):
@@ -135,7 +135,7 @@ def _flip(image: tf.Tensor):
 @tf.function
 def _flip_rotate(image: tf.Tensor, angle: tf.Tensor):
     image = tf.image.flip_left_right(image)
-    return tfa.image.rotate(image, angle, interpolation='BILINEAR')
+    return tfa.image.rotate(image, angle, interpolation='BILINEAR', fill_value=-1000)
 
 @tf.function
 def _scale(image: tf.Tensor, ratio: tf.Tensor, dim=[384, 384, 1]):
@@ -145,7 +145,7 @@ def _scale(image: tf.Tensor, ratio: tf.Tensor, dim=[384, 384, 1]):
     boxes = [x1,y1,x2,y2]
     boxes = tf.cast(tf.reshape(boxes, shape=(1,4)), dtype=tf.float32)
     scaled = tf.image.crop_and_resize([image], boxes=boxes, box_indices=tf.zeros(1, dtype=tf.int32),
-                                        crop_size=(dim[0], dim[1]))
+                                        crop_size=(dim[0], dim[1]), extrapolation_value=-1000)
     scaled = tf.reshape(scaled, shape=(dim[0], dim[1], dim[2]))
     #return tf.cast(scaled, dtype=tf.float16)
     return scaled
