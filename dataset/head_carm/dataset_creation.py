@@ -55,7 +55,7 @@ def test_reconstruction():
 
     tds = tf.data.Dataset.zip((vol_ds, ndl_ds))
     tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    tds = tds.map(lambda x0, x1, x2, y: tf.py_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
+    tds = tds.map(lambda x0, x1, x2, y: tf.numpy_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
                   num_parallel_calls=tf.data.experimental.AUTOTUNE)
     tds = tds.unbatch()  # [h, w, 3]
     tds = tds.map(augment_prior)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
@@ -102,7 +102,7 @@ def generate_datasets(data_path, batch_size=1, buffer_size=1024):
     # training set
     tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # (([u, v, 360], [3], [3]), [u, v, 360])
     tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    tds = tds.map(lambda x0, x1, x2, y: tf.py_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
+    tds = tds.map(lambda x0, x1, x2, y: tf.numpy_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
                   num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
     tds = tds.map(augment_prior)  # ([[h, w], [h, w]], [h, w])
@@ -179,16 +179,13 @@ def _random_rotate_needle(ndl_projections: tf.Tensor):
 
 def _reconstruct_3D_poc(example_proto, full_radon: ConeBeam, sparse_radon: ConeBeam):
     (vol_projections, voxel_size, volume_shape), ndl_projections = example_proto
-    vol_projections = vol_projections.numpy()
-    ndl_projections = ndl_projections.numpy()
 
     num_sparse_projections = len(sparse_radon.angles)
-    voxel_dims = (384, 384, volume_shape[0])  # TODO
+    voxel_dims = (384, 384, volume_shape[0])
 
     # create reconstruction of prior volume
     prior_reco = reconstruct_volume_from_projections(
         vol_projections, full_radon, voxel_dims, voxel_size)
-    prior_reco = tf.convert_to_tensor(prior_reco, tf.float32)
 
     # create interventional projections
     vol_ndl_projections = vol_projections + ndl_projections
@@ -196,15 +193,13 @@ def _reconstruct_3D_poc(example_proto, full_radon: ConeBeam, sparse_radon: ConeB
     # create reconstruction of interventional volume w/ all projections
     full_with_needle = reconstruct_volume_from_projections(
         vol_ndl_projections, full_radon, voxel_dims, voxel_size)
-    full_with_needle = tf.convert_to_tensor(full_with_needle, tf.float32)
 
     # create reconstruction of interventional volume w/ sparse projections
     sparse_with_needle = reconstruct_volume_from_projections(
         vol_ndl_projections[..., ::vol_ndl_projections.shape[-1]//num_sparse_projections],
         sparse_radon, voxel_dims, voxel_size)
-    sparse_with_needle = tf.convert_to_tensor(sparse_with_needle, tf.float32)
-    # return [sparse_with_needle, prior_reco], full_with_needle
-    return tf.stack((sparse_with_needle, prior_reco, full_with_needle), -1)
+
+    return np.stack((sparse_with_needle, prior_reco, full_with_needle), -1)
 
 
 def create_radon(num_views: int) -> ConeBeam:
@@ -418,8 +413,8 @@ def generate_validation_record(subject_list: List[str], out_path: str,
             # training set
             tds = tf.data.Dataset.zip((subject_ds, needle_ds))
             tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-            tds = tds.map(lambda x0, x1, x2, y: tf.py_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
-                            num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
+            tds = tds.map(lambda x0, x1, x2, y: tf.numpy_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
+                          num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
             reco_tensor = next(iter(tds)).numpy()
             reco_shape = reco_tensor.shape
 
