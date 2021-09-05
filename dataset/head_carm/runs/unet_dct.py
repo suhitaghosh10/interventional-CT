@@ -3,11 +3,13 @@ expt = Experiment(seed=42)
 
 from utility.common_imports import *
 from utility.constants import *
+
 import argparse
 
-from dataset.head_carm.utility.dataset_creation import generate_perceptual_dataset
-from dataset.head_carm.models import unet
-from utility.utils import ssim, psnr, mse, lr_scheduler_linear, multiscale_ssim_l2, mssim
+#from dataset.head_carm.dataset_creation import generate_perceptual_dataset_from_3D
+from dataset.head_carm.utility.dataset_creationf import generate_perceptual_dataset
+from dataset.head_carm.models.prior_unet import unet
+from utility.utils import ssim, psnr, mse, dct_mse, lr_scheduler_linear
 from utility.weight_norm import AdamWithWeightnorm
 from utility.logger_utils_prior import PlotReconstructionCallback
 from dataset.head_carm.utility.constants import *
@@ -19,7 +21,7 @@ parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of tr
 parser.add_argument('-bs', '--batch', type=int, default=64, help='Batch size for training')
 parser.add_argument('-bf', '--buffer', type=int, default=512, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
-parser.add_argument('-g', '--gpu', type=str, default='0, 1', help='gpu num')
+parser.add_argument('-g', '--gpu', type=str, default='2,3', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
 parser.add_argument('-eager', '--eager', type=bool, default=False, help='eager mode')
 parser.add_argument('-path', '--path', type=str, default='/project/sghosh/experiments/', help='path to experiments folder')
@@ -47,8 +49,8 @@ os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 ds, vds, teds = generate_perceptual_dataset(IMGS_2D_SHARDS_PATH, bs, buffer)
 steps = (TRAIN_NUM * augm_no) // bs
 
-NAME = 'Unet_Prior_needlev2_SSIM_MSE_priorangle15'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'
-CHKPNT_PATH = scratch_dir+'carmh/UnetPrior_needlev2_SSIM_MSE__priorangle15_seed'+str(expt.get_seed())+'/chkpnt/'
+NAME = 'Unet_Prior_needle2_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'
+CHKPNT_PATH = scratch_dir+'carmh/UnetPrior_needle_dct_seed'+str(expt.get_seed())+'/chkpnt/'
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
 # Create a MirroredStrategy.
@@ -71,13 +73,11 @@ with strategy.scope():
 
     model.compile(optimizer=optimizer,
                   run_eagerly=is_eager,
-                  loss=multiscale_ssim_l2(IMG_DIM_INP_2D, mse_weight=1., ssim_weight=1.0),
+                  loss=dct_mse(IMG_DIM_INP_2D, weight=1.),
                   metrics=[mse(IMG_DIM_INP_2D),
                            ssim(IMG_DIM_INP_2D),
-                           mssim(IMG_DIM_INP_2D),
                            psnr(IMG_DIM_INP_2D)
                            ])
-
     model.summary()
     model.run_eagerly = is_eager  # set true if debug on
 
@@ -117,5 +117,8 @@ with strategy.scope():
 
     # # Fit
     #model.summary()
-    model.fit(ds, validation_data=vds, epochs=epochs, callbacks=callbacks,
-              steps_per_epoch=steps, validation_steps=VAL_NUM // bs)
+    model.fit(ds,
+              #validation_data=vds,
+              epochs=epochs, callbacks=callbacks,
+              steps_per_epoch=steps)
+              #validation_steps=VAL_NUM // bs)

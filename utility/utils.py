@@ -184,3 +184,10 @@ def mssim(dim, weight=1., paddings=None):
         ms_ssim = weight * tf.image.ssim_multiscale(y_true, y_pred, max_val=1.)
         return ms_ssim
     return masked_mssim
+
+def _bytes_feature(value):
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+
+def _int64_feature(value):
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))

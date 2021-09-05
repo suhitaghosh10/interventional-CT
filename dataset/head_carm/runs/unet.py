@@ -6,21 +6,21 @@ from utility.constants import *
 
 import argparse
 
-from dataset.head_carm.dataset_creation import generate_datasets
 from dataset.head_carm.models.prior_unet import unet
 from utility.utils import ssim, psnr, mse, lr_scheduler_linear
 from utility.weight_norm import AdamWithWeightnorm
 from utility.logger_utils_prior import PlotReconstructionCallback
-from dataset.head_carm.constants import *
+from dataset.head_carm.utility.constants import *
 from tensorflow.keras.callbacks import LearningRateScheduler as LRS
+from dataset.head_carm.utility.dataset_creation import generate_datasets
 
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of training epochs')
-parser.add_argument('-bs', '--batch', type=int, default=64, help='Batch size for training')
-parser.add_argument('-bf', '--buffer', type=int, default=512, help='Buffer size for shuffling')
+parser.add_argument('-bs', '--batch', type=int, default=2, help='Batch size for training')
+parser.add_argument('-bf', '--buffer', type=int, default=2, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
-parser.add_argument('-g', '--gpu', type=str, default='2', help='gpu num')
+parser.add_argument('-g', '--gpu', type=str, default='0,1', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
 parser.add_argument('-eager', '--eager', type=bool, default=False, help='eager mode')
 parser.add_argument('-path', '--path', type=str, default='/project/sghosh/experiments/', help='path to experiments folder')
@@ -45,7 +45,7 @@ is_eager = args.eager
 scratch_dir = args.path
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
-ds, vds, teds = generate_datasets(IMGS_2D_SHARDS_PATH, bs, buffer)
+ds = generate_datasets(bs, buffer)
 steps = (TRAIN_NUM * augm_no) // bs
 
 NAME = 'Unet_Prior_needle2_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'
@@ -84,14 +84,14 @@ with strategy.scope():
     TENSORBOARD_PATH = os.path.join('/scratch/sghosh/VAE/logdir', 'Unet_Prior_'+DATASET_NAME, NAME)
     tensorboard_clbk = tfk.callbacks.TensorBoard(log_dir=TENSORBOARD_PATH)
 
-    plot_clbk = PlotReconstructionCallback(logdir=TENSORBOARD_PATH,
-                                           test_ds=teds,
-                                           chkpoint_path=CHKPNT_PATH,
-                                           save_by=save_by,
-                                           save_by_decrease=False,
-                                           log_on_epoch_end=True,
-                                           step_num=1000
-                                           )
+    # plot_clbk = PlotReconstructionCallback(logdir=TENSORBOARD_PATH,
+    #                                        test_ds=teds,
+    #                                        chkpoint_path=CHKPNT_PATH,
+    #                                        save_by=save_by,
+    #                                        save_by_decrease=False,
+    #                                        log_on_epoch_end=True,
+    #                                        step_num=1000
+    #                                        )
     chkpnt_cb = tfk.callbacks.ModelCheckpoint(os.path.join(CHKPNT_PATH, CHKPOINT_NAME),
                                               monitor=save_by,
                                               verbose=1,
@@ -105,7 +105,7 @@ with strategy.scope():
                                               min_delta=0.01)
 
     lrs = LRS(lr_scheduler_linear, verbose=1)
-    callbacks = [tensorboard_clbk, plot_clbk, chkpnt_cb]
+    callbacks = [tensorboard_clbk, chkpnt_cb]
 
     try:
         ckpt = tf.train.Checkpoint( net=model, optimizer=optimizer)
