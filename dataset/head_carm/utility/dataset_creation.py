@@ -35,50 +35,61 @@ def _tensorize(vol_example: Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tens
 
 
 def _tuplelize(tensor: tf.Tensor) -> Tuple[Tuple[tf.Tensor, tf.Tensor], tf.Tensor]:
-    return (tensor[..., 0:1], tensor[..., 1:2]), tensor[..., 2:3]
+    return tf.expand_dims(tf.transpose(tensor[..., 0:2], (2, 0, 1)), 3), tensor[..., 2:3]
 
 
-def test_reconstruction():
-    file_paths = ['/mnt/nvme2/mayoclinic/Head/high_dose_projections/N005c.tfrecord']
-    volumes_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
-    vol_ds = volumes_dataset.map(_decode_vol_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+def test_reconstruction(batch_size: int, buffer_size: int):
+    with open('train_valid_test.json', 'r') as file_handle:
+        json_dict = json.load(file_handle)
+        train_subjects = json_dict['train_subjects']
 
-    file_paths = ['/home/phernst/Documents/git/ictdl/needle_projections/Needle2_Pos2_12.tfrecord']
-    needle_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
-    ndl_ds = needle_dataset.map(_decode_vol_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    ndl_ds = ndl_ds.map(lambda x, _y, _z: x, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    file_paths = [
+        os.path.join(HEAD_PROJECTIONS, f'{tr}.tfrecord')
+        for tr in train_subjects
+    ][:1]
+    volumes_dataset = tf.data.TFRecordDataset(file_paths)
+    vol_ds = volumes_dataset.map(_decode_vol_projections)  # ([w, h, 360], [3], [3])
+    vol_ds = vol_ds.repeat()
+    # vol_ds = vol_ds.shuffle(buffer_size=buffer_size)
 
-    full_radon = create_radon(360)
-    sparse_radon = create_radon(SPARSE_PROJECTION_NUM)  # TODO
+    file_paths = [
+        os.path.join(NEEDLE_PROJECTIONS, filename)
+        for filename in os.listdir(NEEDLE_PROJECTIONS)
+    ][:1]
+    needle_dataset = tf.data.TFRecordDataset(file_paths)
+    ndl_ds = needle_dataset.map(_decode_needle_projections)  # ([u, v, 360], [3], [3])
+    #ndl_ds = ndl_ds.map(lambda x: x[0], num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360] take only projections of needle
+    # ndl_ds = ndl_ds.map(_random_rotate_needle)  # [u, v, 360]
+    ndl_ds = ndl_ds.repeat()
+    # ndl_ds = ndl_ds.shuffle(buffer_size=buffer_size)
 
-    def patched_reco_fn(vol0, vol1, vol2, ndl_example):
-        return _reconstruct_3D_poc(((vol0, vol1, vol2), ndl_example), full_radon, sparse_radon)
-
-    tds = tf.data.Dataset.zip((vol_ds, ndl_ds))
-    tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    tds = tds.map(lambda x0, x1, x2, y: tf.numpy_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
-                  num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))
+    # training set
+    tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # (([u, v, 360], [3], [3]), [u, v, 360])
+    tds = tds.map(_tensorize)
+    tds = tds.map(
+        lambda x0, x1, x2, y: tf.numpy_function(func=_reconstruct_3D_poc, inp=[x0, x1, x2, y], Tout=tf.float32),
+    )  # [w, h, d, 3]
+    tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
-    tds = tds.map(augment_prior)  # (([h, w, 1], [h, w, 1]), [h, w, 1])
+    tds = tds.map(augment_prior)  # ([2, h, w, 1], [h, w, 1])
     tds = tds.shuffle(buffer_size=100)
-    tds = tds.batch(3)
-    tds = tds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    tds = tds.batch(batch_size)
+    tds = tds.prefetch(buffer_size=buffer_size)
 
     iter_tds = iter(tds)
-    (sparse_input, prior_input), full_input = next(iter_tds)
+    sparse_input, full_input = next(iter_tds)
 
-    img = nib.Nifti1Image(sparse_input[0, ..., 0].numpy(), np.eye(4))
-    nib.save(img, 'sparse_with_needle.nii.gz')
-    img = nib.Nifti1Image(prior_input[0, ..., 0].numpy(), np.eye(4))
-    nib.save(img, 'prior_reco.nii.gz')
-    img = nib.Nifti1Image(full_input[0, ..., 0].numpy(), np.eye(4))
-    nib.save(img, 'full_with_needle.nii.gz')
+    # img = nib.Nifti1Image(sparse_input[0, ..., 0].numpy(), np.eye(4))
+    # nib.save(img, 'sparse_with_needle.nii.gz')
+    # img = nib.Nifti1Image(prior_input[0, ..., 0].numpy(), np.eye(4))
+    # nib.save(img, 'prior_reco.nii.gz')
+    # img = nib.Nifti1Image(full_input[0, ..., 0].numpy(), np.eye(4))
+    # nib.save(img, 'full_with_needle.nii.gz')
 
     from time import time
     t0 = time()
-    num_iterations: int = 100
-    for _ in range(num_iterations):
+    num_iterations: int = 2000
+    for _ in tqdm(range(num_iterations)):
         _ = next(iter_tds)
     print(f'{(time() - t0)/num_iterations}s per batch')
 
@@ -92,8 +103,8 @@ def generate_datasets(batch_size=1, buffer_size=1024):
         os.path.join(HEAD_PROJECTIONS, f'{tr}.tfrecord')
         for tr in train_subjects
     ]
-    volumes_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
-    vol_ds = volumes_dataset.map(_decode_vol_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # ([w, h, 360], [3], [3])
+    volumes_dataset = tf.data.TFRecordDataset(file_paths)
+    vol_ds = volumes_dataset.map(_decode_vol_projections)  # ([w, h, 360], [3], [3])
     vol_ds = vol_ds.repeat()
     vol_ds = vol_ds.shuffle(buffer_size=buffer_size)
 
@@ -101,27 +112,22 @@ def generate_datasets(batch_size=1, buffer_size=1024):
         os.path.join(NEEDLE_PROJECTIONS, filename)
         for filename in os.listdir(NEEDLE_PROJECTIONS)
     ]
-    needle_dataset = tf.data.TFRecordDataset(file_paths, num_parallel_reads=tf.data.experimental.AUTOTUNE)
-    ndl_ds = needle_dataset.map(_decode_needle_projections, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # ([u, v, 360], [3], [3])
+    needle_dataset = tf.data.TFRecordDataset(file_paths)
+    ndl_ds = needle_dataset.map(_decode_needle_projections)  # ([u, v, 360], [3], [3])
     #ndl_ds = ndl_ds.map(lambda x: x[0], num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360] take only projections of needle
-    ndl_ds = ndl_ds.map(_random_rotate_needle, num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360]
+    ndl_ds = ndl_ds.map(_random_rotate_needle)  # [u, v, 360]
     ndl_ds = ndl_ds.repeat()
     ndl_ds = ndl_ds.shuffle(buffer_size=buffer_size)
 
-    full_radon = create_radon(TOTAL_PROJECTION_NUM)
-    sparse_radon = create_radon(SPARSE_PROJECTION_NUM)  # TODO
-
-    def patched_reco_fn(vol0, vol1, vol2, ndl_example):
-        return _reconstruct_3D_poc(((vol0, vol1, vol2), ndl_example), full_radon, sparse_radon)
-
     # training set
     tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # (([u, v, 360], [3], [3]), [u, v, 360])
-    tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    tds = tds.map(lambda x0, x1, x2, y: tf.numpy_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
-                  num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [w, h, d, 3]
+    tds = tds.map(_tensorize)
+    tds = tds.map(
+        lambda x0, x1, x2, y: tf.numpy_function(func=_reconstruct_3D_poc, inp=[x0, x1, x2, y], Tout=tf.float32),
+    )  # [w, h, d, 3]
     tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
-    tds = tds.map(augment_prior)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
+    tds = tds.map(augment_prior)  # ([2, h, w, 1], [h, w, 1])
     tds = tds.shuffle(buffer_size=buffer_size)
     tds = tds.batch(batch_size)
     tds = tds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
@@ -308,9 +314,9 @@ def _random_rotate_needle(ndl_projections: tf.Tensor):
         -1)
 
 
-def _reconstruct_3D_poc(example_proto, full_radon: ConeBeam, sparse_radon: ConeBeam):
-
-    (vol_projections, voxel_size, volume_shape), ndl_projections = example_proto
+def _reconstruct_3D_poc(vol_projections, voxel_size, volume_shape, ndl_projections):
+    full_radon = create_radon(TOTAL_PROJECTION_NUM)
+    sparse_radon = create_radon(SPARSE_PROJECTION_NUM)  # TODO
 
     num_sparse_projections = len(sparse_radon.angles)
     voxel_dims = (384, 384, volume_shape[0])
@@ -378,7 +384,9 @@ def reconstruct_volume_from_projections(projections: np.ndarray, radon: ConeBeam
     reco_t = radon.backprojection(filter_sinogram_3d(projections_t, 'hann'))
     reco_t = reco_t*det_spacing_v/src_det_dist*src_dist  # cone beam correction
     reco_t = mu2hu(reco_t, 0.02)
-    return reco_t[0, 0].cpu().numpy().transpose()
+    reco = reco_t[0, 0].cpu()
+    torch.cuda.empty_cache()
+    return reco.numpy().transpose()
 
 
 def generate_train_valid_test_split(subject_directory: str):
@@ -462,4 +470,5 @@ def create_test_set_record():
 
 
 if __name__ == '__main__':
-    test_reconstruction()
+    os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+    test_reconstruction(16, 2)
