@@ -3,10 +3,10 @@ DATA_PATH= '/project/sghosh/dataset/carm_head/'
 # TRAIN_NUM = 32 * 314 * 64 # no of patients = 32
 # VAL_NUM = 2 * 314
 # TEST_NUM = 2 * 314
-AUG_NUM = 64
-TRAIN_NUM = 10080 * AUG_NUM # no of patients = 32
-VAL_NUM = 352
-TEST_NUM = 352
+AUG_NUM = 1
+TRAIN_NUM = 17180 * AUG_NUM # no of patients = 32
+VAL_NUM = 3877
+TEST_NUM = 352  # TODO
 
 TB_PATH = '/scratch/sghosh/VAE/logdir'
 

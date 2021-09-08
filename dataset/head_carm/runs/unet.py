@@ -17,7 +17,7 @@ from dataset.head_carm.utility.dataset_creation import generate_datasets
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of training epochs')
-parser.add_argument('-bs', '--batch', type=int, default=2, help='Batch size for training')
+parser.add_argument('-bs', '--batch', type=int, default=32, help='Batch size for training')
 parser.add_argument('-bf', '--buffer', type=int, default=2, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
 parser.add_argument('-g', '--gpu', type=str, default='0,1', help='gpu num')
@@ -45,19 +45,23 @@ is_eager = args.eager
 scratch_dir = args.path
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
-ds = generate_datasets(bs, buffer)
+ds, vds = generate_datasets(bs, buffer)
 steps = (TRAIN_NUM * augm_no) // bs
 
 NAME = 'Unet_Prior_needle2_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'
 CHKPNT_PATH = scratch_dir+'carmhtest/UnetPrior_needle2_seed'+str(expt.get_seed())+'/chkpnt/'
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
-# Create a MirroredStrategy.
-strategy = tf.distribute.MirroredStrategy()
-print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
+def run_distributed_training():
+    # Create a MirroredStrategy.
+    strategy = tf.distribute.MirroredStrategy()
+    print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
 
-# Open a s<trategy scope.
-with strategy.scope():
+    # Open a s<trategy scope.
+    with strategy.scope():
+        run_training()
+
+def run_training():
     act = tf.keras.layers.LeakyReLU(alpha=0.2)
 
     # Define model
@@ -108,7 +112,7 @@ with strategy.scope():
     callbacks = [tensorboard_clbk, chkpnt_cb]
 
     try:
-        ckpt = tf.train.Checkpoint( net=model, optimizer=optimizer)
+        ckpt = tf.train.Checkpoint(net=model, optimizer=optimizer)
         ckpt.restore(os.path.join(CHKPNT_PATH , CHKPOINT_NAME))
         print("Restored from {}".format(CHKPNT_PATH))
     except:
@@ -116,8 +120,14 @@ with strategy.scope():
 
     # # Fit
     #model.summary()
-    model.fit(ds,
-              #validation_data=vds,
-              epochs=epochs, callbacks=callbacks,
-              steps_per_epoch=steps)
-              #validation_steps=VAL_NUM // bs)
+    model.fit(
+        ds,
+        validation_data=vds,
+        epochs=epochs,
+        callbacks=callbacks,
+        steps_per_epoch=steps,
+        validation_steps=VAL_NUM // bs
+    )
+
+if __name__ == '__main__':
+    run_training()

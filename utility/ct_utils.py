@@ -9,6 +9,10 @@ def mu2hu(volume: torch.Tensor, mu_water: float) -> torch.Tensor:
     return (volume - mu_water)/mu_water * 1000
 
 
+def hu2mu(volume: torch.Tensor, mu_water: float) -> torch.Tensor:
+    return (volume * mu_water)/1000 + mu_water
+
+
 def filter_sinogram_3d(sinogram: torch.Tensor, filter_name="ramp"):
     fft_cache = cuda_backend.FFTCache(8)
     fourier_filters = FourierFilters()

@@ -13,7 +13,7 @@ from tqdm import tqdm
 from utility.utils import _bytes_feature, _int64_feature
 
 from dataset.head_carm.utility.constants import *
-from utility.ct_utils import mu2hu, filter_sinogram_3d
+from utility.ct_utils import mu2hu, hu2mu, filter_sinogram_3d
 from utility.utils import augment_prior
 from utility.ict_system import ArtisQSystem, DetectorBinning
 
@@ -34,8 +34,49 @@ def _tensorize(vol_example: Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tens
     return vol_example[0], tf.stack(vol_example[1]), tf.stack(vol_example[2]), ndl_example
 
 
-def _tuplelize(tensor: tf.Tensor) -> Tuple[Tuple[tf.Tensor, tf.Tensor], tf.Tensor]:
+def _tuplelize(tensor: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
     return tf.expand_dims(tf.transpose(tensor[..., 0:2], (2, 0, 1)), 3), tensor[..., 2:3]
+
+
+def _hu2normalized(tensor0: tf.Tensor, tensor1: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+    return hu2mu(tensor0, .02)/hu2mu(CARMH_GT_UPPER_99_PERCENTILE, .02), \
+            hu2mu(tensor1, .02)/hu2mu(CARMH_GT_UPPER_99_PERCENTILE, .02)
+
+
+def count_training_slices():
+    with open('train_valid_test.json', 'r') as file_handle:
+        json_dict = json.load(file_handle)
+        train_subjects = json_dict['train_subjects']
+
+    file_paths = [
+        os.path.join(HEAD_PROJECTIONS, f'{tr}.tfrecord')
+        for tr in train_subjects
+    ]
+
+    def get_num_slices(_x, _y, volume_shape):
+        return volume_shape[0]
+
+    volumes_dataset = tf.data.TFRecordDataset(file_paths)
+    vol_ds = volumes_dataset.map(_decode_vol_projections)
+    vol_ds = vol_ds.map(get_num_slices)
+    all_num_slices = vol_ds.reduce(np.int64(0), lambda x, y: x + y).numpy()
+    print(all_num_slices)  # 17180
+
+
+def count_valid_slices():
+    file_paths = [
+        os.path.join(VALIDATION_RECORDS, tr)
+        for tr in os.listdir(VALIDATION_RECORDS)
+    ]
+
+    def get_num_slices(_x, _y, volume_shape):
+        return volume_shape[0]
+
+    volumes_dataset = tf.data.TFRecordDataset(file_paths)
+    vol_ds = volumes_dataset.map(_decode_vol_projections)
+    vol_ds = vol_ds.map(get_num_slices)
+    all_num_slices = vol_ds.reduce(np.int64(0), lambda x, y: x + y).numpy()
+    print(all_num_slices)  # 3877
 
 
 def test_reconstruction(batch_size: int, buffer_size: int):
@@ -128,23 +169,25 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
     tds = tds.map(augment_prior)  # ([2, h, w, 1], [h, w, 1])
+    tds = tds.map(_hu2normalized)
     tds = tds.shuffle(buffer_size=buffer_size)
     tds = tds.batch(batch_size)
     tds = tds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    # # validation set
-    # file_paths = [
-    #     os.path.join(VALIDATION_RECORDS, filename)
-    #     for filename in os.listdir(VALIDATION_RECORDS)
-    # ]
-    # val_dataset = tf.data.TFRecordDataset(file_paths)
-    # vds = val_dataset.map(_decode_validation_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    # vds = vds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
-    # vds = vds.unbatch()  # [h, w, 3]
-    # vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
-    # vds = vds.batch(batch_size=batch_size)
-    # vds = vds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-    #
+    # validation set
+    file_paths = [
+        os.path.join(VALIDATION_RECORDS, filename)
+        for filename in os.listdir(VALIDATION_RECORDS)
+    ]
+    val_dataset = tf.data.TFRecordDataset(file_paths)
+    vds = val_dataset.map(_decode_validation_data)
+    vds = vds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
+    vds = vds.unbatch()  # [h, w, 3]
+    vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
+    vds = vds.map(_hu2normalized)
+    vds = vds.batch(batch_size=batch_size)
+    vds = vds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    
     # # test set, unbatched
     # file_paths = [
     #     os.path.join(TEST_RECORDS, filename)
@@ -157,8 +200,7 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     # vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
     # teds = teds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    return tds
-        #, vds, teds
+    return tds, vds  #, teds
 
 def _decode_vol_projections(example_proto):
     feature = tf.io.parse_single_example(
@@ -264,8 +306,8 @@ def _decode_validation_data(example_proto):
 
 def test_validation_data():
     file_paths = [
-        '/home/phernst/Documents/git/interventional-CT/ds_validation/'
-        'N180c_Needle2_Pos1_11.tfrecord'
+        os.path.join(VALIDATION_RECORDS, filename)
+        for filename in os.listdir(VALIDATION_RECORDS)
     ]
     # validation_ds = tf.data.TFRecordDataset(file_paths)
     # validation_ds = validation_ds.map(_decode_validation_data)
@@ -288,17 +330,17 @@ def test_validation_data():
     vds = vds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
     vds = vds.unbatch()  # [h, w, 3]
     vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
-    vds = vds.batch(batch_size=3)
+    vds = vds.batch(batch_size=32)
     vds = vds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-    (sparse_input, prior_input), full_input = next(iter(vds))
-    print(sparse_input.shape, prior_input.shape, full_input.shape)
 
-    img = nib.Nifti1Image(sparse_input[0, ..., 0].numpy(), np.eye(4))
-    nib.save(img, 'sparse_with_needle.nii.gz')
-    img = nib.Nifti1Image(prior_input[0, ..., 0].numpy(), np.eye(4))
-    nib.save(img, 'prior_reco.nii.gz')
-    img = nib.Nifti1Image(full_input[0, ..., 0].numpy(), np.eye(4))
-    nib.save(img, 'full_with_needle.nii.gz')
+    from time import time
+    ds_iter = iter(vds)
+    _ = next(ds_iter)
+    t0 = time()
+    num_iterations: int = VAL_NUM // 32
+    for _ in tqdm(range(num_iterations - 1)):
+        _ = next(ds_iter)
+    print(f'{(time() - t0)/num_iterations}s per batch')
 
 
 def _random_rotate_needle(ndl_projections: tf.Tensor):
@@ -471,4 +513,5 @@ def create_test_set_record():
 
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = '0'
-    test_reconstruction(16, 2)
+    # test_reconstruction(16, 2)
+    test_validation_data()

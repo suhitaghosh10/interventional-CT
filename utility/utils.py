@@ -69,7 +69,7 @@ def augment_prior(input_tensor: tf.Tensor):
         sparse_reco, prior = _flip_rotate(sparse_reco, angle), _flip_rotate(prior, angle)
         full_reco = _flip_rotate(full_reco, angle)
 
-    return (sparse_reco, prior), full_reco
+    return tf.stack((sparse_reco, prior)), full_reco
 
 
 def _get_needle_numpy(needle_type):
