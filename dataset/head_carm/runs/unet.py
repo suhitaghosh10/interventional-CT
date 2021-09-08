@@ -45,7 +45,15 @@ is_eager = args.eager
 scratch_dir = args.path
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
-ds, vds = generate_datasets(bs, buffer)
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        print(e)
+
+ds, vds, _ = generate_datasets(bs, buffer)
 steps = (TRAIN_NUM * augm_no) // bs
 
 NAME = 'Unet_Prior_needle2_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'
@@ -128,6 +136,7 @@ def run_training():
         steps_per_epoch=steps,
         validation_steps=VAL_NUM // bs
     )
+
 
 if __name__ == '__main__':
     run_training()

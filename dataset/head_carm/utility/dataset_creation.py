@@ -136,7 +136,7 @@ def test_reconstruction(batch_size: int, buffer_size: int):
 
 
 def generate_datasets(batch_size=1, buffer_size=1024):
-    with open('../utility/train_valid_test.json', 'r') as file_handle:
+    with open('train_valid_test.json', 'r') as file_handle:
         json_dict = json.load(file_handle)
         train_subjects = json_dict['train_subjects']
 
@@ -152,6 +152,7 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     file_paths = [
         os.path.join(NEEDLE_PROJECTIONS, filename)
         for filename in os.listdir(NEEDLE_PROJECTIONS)
+        if filename.endswith('.tfrecord')
     ]
     needle_dataset = tf.data.TFRecordDataset(file_paths)
     ndl_ds = needle_dataset.map(_decode_needle_projections)  # ([u, v, 360], [3], [3])
@@ -178,6 +179,7 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     file_paths = [
         os.path.join(VALIDATION_RECORDS, filename)
         for filename in os.listdir(VALIDATION_RECORDS)
+        if filename.endswith('.tfrecord')
     ]
     val_dataset = tf.data.TFRecordDataset(file_paths)
     vds = val_dataset.map(_decode_validation_data)
@@ -187,20 +189,23 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     vds = vds.map(_hu2normalized)
     vds = vds.batch(batch_size=batch_size)
     vds = vds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
-    
-    # # test set, unbatched
-    # file_paths = [
-    #     os.path.join(TEST_RECORDS, filename)
-    #     for filename in os.listdir(TEST_RECORDS)
-    # ]
-    # test_dataset = tf.data.TFRecordDataset(file_paths)
-    # teds = test_dataset.map(_decode_validation_data, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-    # vds = vds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
-    # vds = vds.unbatch()  # [h, w, 3]
-    # vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
-    # teds = teds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
-    return tds, vds  #, teds
+    # test set, unbatched
+    file_paths = [
+        os.path.join(TEST_RECORDS, filename)
+        for filename in os.listdir(TEST_RECORDS)
+        if filename.endswith('.tfrecord')
+    ]
+    test_dataset = tf.data.TFRecordDataset(file_paths)
+    teds = test_dataset.map(_decode_validation_data)
+    teds = teds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
+    teds = teds.unbatch()  # [h, w, 3]
+    teds = teds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
+    teds = teds.map(_hu2normalized)
+    teds = teds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+
+    return tds, vds, teds
+
 
 def _decode_vol_projections(example_proto):
     feature = tf.io.parse_single_example(
