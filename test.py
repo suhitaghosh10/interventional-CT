@@ -6,6 +6,7 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from dataset.head_carm.models.prior_unet import unet as UNet
+from dataset.head_carm.utility.constants import IMG_DIM_INP_2D
 from dataset.head_carm.utility.dataset_creation import generate_datasets
 from utility.utils import ssim, psnr, mse
 
@@ -18,13 +19,11 @@ def main():
     model = UNet().build_model(d=start_filter_size, act=act)
     _ = model.load_weights(pjoin('checkpoints', 'cp.ckpt')).expect_partial()
 
-    img_dim_inp_2d = (384, 384, 1)
-
     model.compile(optimizer=tf.keras.optimizers.Adam(),
-                  loss=mse(img_dim_inp_2d, weight=1.),
-                  metrics=[mse(img_dim_inp_2d),
-                           ssim(img_dim_inp_2d),
-                           psnr(img_dim_inp_2d)
+                  loss=mse(IMG_DIM_INP_2D, weight=1.),
+                  metrics=[mse(IMG_DIM_INP_2D),
+                           ssim(IMG_DIM_INP_2D),
+                           psnr(IMG_DIM_INP_2D)
                            ])
 
     tds = generate_datasets()[2].batch(batch_size=64)
