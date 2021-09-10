@@ -1,3 +1,4 @@
+import os
 from os.path import join as pjoin
 
 import nibabel as nib
@@ -39,4 +40,7 @@ def main():
 
 
 if __name__ == '__main__':
+    os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+    for gpu in tf.config.experimental.list_physical_devices('GPU'):
+        tf.config.experimental.set_memory_growth(gpu, True)
     main()

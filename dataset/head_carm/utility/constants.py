@@ -24,6 +24,7 @@ IMG_DIM_INP_2D = (384, 384, 1)
 # Load dataset
 IMGS_2D_SHARDS_PATH = '/project/sghosh/dataset/carm_head/tf_shards/'
 IMGS_2D_DCT_SHARDS_PATH = '/project/sghosh/dataset/carm_head/dct/tf_shards/'
+HEAD_PRIORS: str = '/project/sghosh/dataset/mayoclinic/Head/validation/priors/'
 HEAD_PROJECTIONS: str = '/project/sghosh/dataset/mayoclinic/Head/high_dose_projections/cone-beam/'
 NEEDLE_PROJECTIONS: str = '/project/sghosh/dataset/mayoclinic/Head/high_dose_projections/needles/'
 VALIDATION_RECORDS: str = '/project/sghosh/dataset/mayoclinic/Head/validation/'

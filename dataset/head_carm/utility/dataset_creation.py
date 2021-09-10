@@ -35,7 +35,7 @@ def _tensorize(vol_example: Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tens
 
 
 def _tuplelize(tensor: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
-    return tf.expand_dims(tf.transpose(tensor[..., 0:2], (2, 0, 1)), 3), tensor[..., 2:3]
+    return tf.expand_dims(tf.stack([tensor[..., 0], tensor[..., 2]]), axis=3), tensor[..., 1:2]
 
 
 def _hu2normalized(tensor0: tf.Tensor, tensor1: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
@@ -91,18 +91,25 @@ def test_reconstruction(batch_size: int, buffer_size: int):
     volumes_dataset = tf.data.TFRecordDataset(file_paths)
     vol_ds = volumes_dataset.map(_decode_vol_projections)  # ([w, h, 360], [3], [3])
     vol_ds = vol_ds.repeat()
-    # vol_ds = vol_ds.shuffle(buffer_size=buffer_size)
 
     file_paths = [
         os.path.join(NEEDLE_PROJECTIONS, filename)
         for filename in os.listdir(NEEDLE_PROJECTIONS)
+        if filename.endswith('.tfrecord')
     ][:1]
+    print(file_paths)
     needle_dataset = tf.data.TFRecordDataset(file_paths)
     ndl_ds = needle_dataset.map(_decode_needle_projections)  # ([u, v, 360], [3], [3])
-    #ndl_ds = ndl_ds.map(lambda x: x[0], num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360] take only projections of needle
-    # ndl_ds = ndl_ds.map(_random_rotate_needle)  # [u, v, 360]
     ndl_ds = ndl_ds.repeat()
-    # ndl_ds = ndl_ds.shuffle(buffer_size=buffer_size)
+
+    file_paths = [
+        os.path.join(HEAD_PRIORS, f'{tr}.tfrecord')
+        for tr in train_subjects
+    ][:1]
+    print(file_paths)
+    prior_ds = tf.data.TFRecordDataset(file_paths)
+    prior_ds = prior_ds.map(_decode_prior)
+    prior_ds = prior_ds.repeat()
 
     # training set
     tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # (([u, v, 360], [3], [3]), [u, v, 360])
@@ -110,7 +117,9 @@ def test_reconstruction(batch_size: int, buffer_size: int):
     tds = tds.map(
         lambda x0, x1, x2, y: tf.numpy_function(func=_reconstruct_3D_poc, inp=[x0, x1, x2, y], Tout=tf.float32),
     )  # [w, h, d, 3]
-    tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 3]
+    tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 2]
+    tds = tf.data.Dataset.zip((tds, prior_ds))  # ([d, h, w, 2], [d, h, w, 1])
+    tds = tds.map(lambda x, y: tf.concat([x, y], axis=3))  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
     tds = tds.map(augment_prior)  # ([2, h, w, 1], [h, w, 1])
     tds = tds.shuffle(buffer_size=100)
@@ -118,21 +127,22 @@ def test_reconstruction(batch_size: int, buffer_size: int):
     tds = tds.prefetch(buffer_size=buffer_size)
 
     iter_tds = iter(tds)
-    sparse_input, full_input = next(iter_tds)
+    for _ in tqdm(range(30)):
+        sparse_input, full_input = next(iter_tds)
 
-    # img = nib.Nifti1Image(sparse_input[0, ..., 0].numpy(), np.eye(4))
-    # nib.save(img, 'sparse_with_needle.nii.gz')
-    # img = nib.Nifti1Image(prior_input[0, ..., 0].numpy(), np.eye(4))
-    # nib.save(img, 'prior_reco.nii.gz')
-    # img = nib.Nifti1Image(full_input[0, ..., 0].numpy(), np.eye(4))
-    # nib.save(img, 'full_with_needle.nii.gz')
+    img = nib.Nifti1Image(sparse_input[:, 0, ..., 0].numpy().transpose(), np.eye(4))
+    nib.save(img, 'sparse_with_needle.nii.gz')
+    img = nib.Nifti1Image(sparse_input[:, 1, ..., 0].numpy().transpose(), np.eye(4))
+    nib.save(img, 'prior_reco.nii.gz')
+    img = nib.Nifti1Image(full_input[..., 0].numpy().transpose(), np.eye(4))
+    nib.save(img, 'full_with_needle.nii.gz')
 
-    from time import time
-    t0 = time()
-    num_iterations: int = 2000
-    for _ in tqdm(range(num_iterations)):
-        _ = next(iter_tds)
-    print(f'{(time() - t0)/num_iterations}s per batch')
+    # from time import time
+    # t0 = time()
+    # num_iterations: int = 2000
+    # for _ in tqdm(range(num_iterations)):
+    #     _ = next(iter_tds)
+    # print(f'{(time() - t0)/num_iterations}s per batch')
 
 
 def generate_datasets(batch_size=1, buffer_size=1024):
@@ -147,7 +157,6 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     volumes_dataset = tf.data.TFRecordDataset(file_paths)
     vol_ds = volumes_dataset.map(_decode_vol_projections)  # ([w, h, 360], [3], [3])
     vol_ds = vol_ds.repeat()
-    vol_ds = vol_ds.shuffle(buffer_size=buffer_size)
 
     file_paths = [
         os.path.join(NEEDLE_PROJECTIONS, filename)
@@ -156,18 +165,27 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     ]
     needle_dataset = tf.data.TFRecordDataset(file_paths)
     ndl_ds = needle_dataset.map(_decode_needle_projections)  # ([u, v, 360], [3], [3])
-    #ndl_ds = ndl_ds.map(lambda x: x[0], num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [u, v, 360] take only projections of needle
     ndl_ds = ndl_ds.map(_random_rotate_needle)  # [u, v, 360]
     ndl_ds = ndl_ds.repeat()
     ndl_ds = ndl_ds.shuffle(buffer_size=buffer_size)
+
+    file_paths = [
+        os.path.join(HEAD_PRIORS, f'{tr}.tfrecord')
+        for tr in train_subjects
+    ]
+    prior_ds = tf.data.TFRecordDataset(file_paths)
+    prior_ds = prior_ds.map(_decode_prior)
+    prior_ds = prior_ds.repeat()
 
     # training set
     tds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # (([u, v, 360], [3], [3]), [u, v, 360])
     tds = tds.map(_tensorize)
     tds = tds.map(
         lambda x0, x1, x2, y: tf.numpy_function(func=_reconstruct_3D_poc, inp=[x0, x1, x2, y], Tout=tf.float32),
-    )  # [w, h, d, 3]
-    tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 3]
+    )  # [w, h, d, 2]
+    tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 2]
+    tds = tf.data.Dataset.zip((tds, prior_ds))  # ([d, h, w, 2], [d, h, w, 1])
+    tds = tds.map(lambda x, y: tf.concat([x, y], axis=3))  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
     tds = tds.map(augment_prior)  # ([2, h, w, 1], [h, w, 1])
     tds = tds.map(_hu2normalized)
@@ -183,7 +201,8 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     ]
     val_dataset = tf.data.TFRecordDataset(file_paths)
     vds = val_dataset.map(_decode_validation_data)
-    vds = vds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
+    vds = vds.map(lambda x, _y, _z: x)  # [w, h, d, 3]
+    vds = vds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))
     vds = vds.unbatch()  # [h, w, 3]
     vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
     vds = vds.map(_hu2normalized)
@@ -198,7 +217,8 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     ]
     test_dataset = tf.data.TFRecordDataset(file_paths)
     teds = test_dataset.map(_decode_validation_data)
-    teds = teds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
+    teds = teds.map(lambda x, _y, _z: x)  # [w, h, d, 3]
+    teds = teds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))
     teds = teds.unbatch()  # [h, w, 3]
     teds = teds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
     teds = teds.map(_hu2normalized)
@@ -284,6 +304,33 @@ def _decode_needle_projections(example_proto):
     return tf.reshape(projections, (width, height, angles))
 
 
+def _decode_prior(example_proto):
+    feature = tf.io.parse_single_example(
+        example_proto,
+        features={
+            'volume': tf.io.FixedLenFeature([], tf.string),
+            'voxel_spacing_x': tf.io.FixedLenFeature([], tf.float32),
+            'voxel_spacing_y': tf.io.FixedLenFeature([], tf.float32),
+            'voxel_spacing_z': tf.io.FixedLenFeature([], tf.float32),
+            'volume_depth': tf.io.FixedLenFeature([], tf.int64),
+            'volume_height': tf.io.FixedLenFeature([], tf.int64),
+            'volume_width': tf.io.FixedLenFeature([], tf.int64),
+        })
+
+    volume = tf.io.decode_raw(feature['volume'], tf.float32)
+    depth = feature['volume_depth']
+    height = feature['volume_height']
+    width = feature['volume_width']
+    voxel_spacing = (
+        feature['voxel_spacing_x'],
+        feature['voxel_spacing_y'],
+        feature['voxel_spacing_z'],
+    )
+
+    # return tf.reshape(volume, (depth, height, width, 1)), voxel_spacing
+    return tf.reshape(volume, (depth, height, width, 1))
+
+
 def _decode_validation_data(example_proto):
     feature = tf.io.parse_single_example(
         example_proto,
@@ -313,34 +360,23 @@ def test_validation_data():
     file_paths = [
         os.path.join(VALIDATION_RECORDS, filename)
         for filename in os.listdir(VALIDATION_RECORDS)
+        if filename.endswith('.tfrecord')
     ]
-    # validation_ds = tf.data.TFRecordDataset(file_paths)
-    # validation_ds = validation_ds.map(_decode_validation_data)
-    # reco_tensor, subject_file, needle_file = next(iter(validation_ds))
-    # reco_tensor = reco_tensor.numpy()
-    # subject_file = subject_file.numpy().decode('utf-8')
-    # needle_file = needle_file.numpy().decode('utf-8')
 
-    # print(reco_tensor.shape, subject_file, needle_file)
-
-    # img = nib.Nifti1Image(reco_tensor[..., 0], np.eye(4))
-    # nib.save(img, 'sparse_with_needle.nii.gz')
-    # img = nib.Nifti1Image(reco_tensor[..., 1], np.eye(4))
-    # nib.save(img, 'prior_reco.nii.gz')
-    # img = nib.Nifti1Image(reco_tensor[..., 2], np.eye(4))
-    # nib.save(img, 'full_with_needle.nii.gz')
-
-    validation_ds = tf.data.TFRecordDataset(file_paths)
-    vds = validation_ds.map(_decode_validation_data)
+    val_dataset = tf.data.TFRecordDataset(file_paths)
+    vds = val_dataset.map(_decode_validation_data)
     vds = vds.map(lambda x, _y, _z: x)  # [d, h, w, 3]
+    vds = vds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))
     vds = vds.unbatch()  # [h, w, 3]
     vds = vds.map(_tuplelize)  # ([[h, w, 1], [h, w, 1]], [h, w, 1])
+    vds = vds.map(_hu2normalized)
     vds = vds.batch(batch_size=32)
     vds = vds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
     from time import time
     ds_iter = iter(vds)
-    _ = next(ds_iter)
+    input_data, output_data = next(ds_iter)
+    print(input_data.shape, output_data.shape)
     t0 = time()
     num_iterations: int = VAL_NUM // 32
     for _ in tqdm(range(num_iterations - 1)):
@@ -368,10 +404,6 @@ def _reconstruct_3D_poc(vol_projections, voxel_size, volume_shape, ndl_projectio
     num_sparse_projections = len(sparse_radon.angles)
     voxel_dims = (384, 384, volume_shape[0])
 
-    # create reconstruction of prior volume
-    prior_reco = reconstruct_volume_from_projections(
-        vol_projections, full_radon, voxel_dims, voxel_size)
-
     # create interventional projections
     vol_ndl_projections = vol_projections + ndl_projections
 
@@ -384,7 +416,7 @@ def _reconstruct_3D_poc(vol_projections, voxel_size, volume_shape, ndl_projectio
         vol_ndl_projections[..., ::vol_ndl_projections.shape[-1]//num_sparse_projections],
         sparse_radon, voxel_dims, voxel_size)
 
-    return np.stack((sparse_with_needle, prior_reco, full_with_needle), -1)
+    return np.stack((sparse_with_needle, full_with_needle), -1)
 
 
 def create_radon(num_views: int) -> ConeBeam:
@@ -454,17 +486,12 @@ def generate_validation_record(subject_list: List[str], out_path: str,
                                subject_dir: Optional[str] = None,
                                needle_dir: Optional[str] = None):
     subject_dir = HEAD_PROJECTIONS if subject_dir is None else subject_dir
+    prior_dir = HEAD_PRIORS
     needle_dir = NEEDLE_PROJECTIONS if needle_dir is None else needle_dir
     needle_files = [n for n in os.listdir(needle_dir) if n.endswith('.tfrecord')]
     subject_needle_combinations = [
         (x+'.tfrecord', y) for x in subject_list for y in needle_files
     ]
-
-    full_radon = create_radon(360)
-    sparse_radon = create_radon(SPARSE_PROJECTION_NUM)  # TODO change number of sparse samples
-
-    def patched_reco_fn(vol0, vol1, vol2, ndl_example):
-        return _reconstruct_3D_poc(((vol0, vol1, vol2), ndl_example), full_radon, sparse_radon)
 
     for subject_file, needle_file in tqdm(subject_needle_combinations):
         out_file = f'{subject_file[:subject_file.index(".")]}_' \
@@ -473,15 +500,21 @@ def generate_validation_record(subject_list: List[str], out_path: str,
             subject_ds = tf.data.TFRecordDataset([os.path.join(subject_dir, subject_file)])
             subject_ds = subject_ds.map(_decode_vol_projections)
 
+            prior_ds = tf.data.TFRecordDataset([os.path.join(prior_dir, subject_file)])
+            prior_ds = prior_ds.map(_decode_prior)  # [d, h, w, 1]
+
             needle_ds = tf.data.TFRecordDataset([os.path.join(needle_dir, needle_file)])
             needle_ds = needle_ds.map(_decode_needle_projections)
-            needle_ds = needle_ds.map(lambda x, _y, _z: x)
 
             # training set
             tds = tf.data.Dataset.zip((subject_ds, needle_ds))
-            tds = tds.map(_tensorize, num_parallel_calls=tf.data.experimental.AUTOTUNE)
-            tds = tds.map(lambda x0, x1, x2, y: tf.numpy_function(func=patched_reco_fn, inp=[x0, x1, x2, y], Tout=tf.float32),
-                          num_parallel_calls=tf.data.experimental.AUTOTUNE)  # [d, h, w, 3]
+            tds = tds.map(_tensorize)
+            tds = tds.map(
+                lambda x0, x1, x2, y: tf.numpy_function(func=_reconstruct_3D_poc, inp=[x0, x1, x2, y], Tout=tf.float32),
+            )  # [w, h, d, 2]
+            tds = tds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 2]
+            tds = tf.data.Dataset.zip((tds, prior_ds))
+            tds = tds.map(lambda x, y: tf.concat([x, y], axis=3))
             reco_tensor = next(iter(tds)).numpy()
             reco_shape = reco_tensor.shape
 
@@ -518,5 +551,7 @@ def create_test_set_record():
 
 if __name__ == '__main__':
     os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+    for gpu in tf.config.experimental.list_physical_devices('GPU'):
+        tf.config.experimental.set_memory_growth(gpu, True)
     # test_reconstruction(16, 2)
     test_validation_data()

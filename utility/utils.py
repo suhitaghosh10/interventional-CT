@@ -45,8 +45,8 @@ def mse(dim, paddings=None, weight=1):
 
 def augment_prior(input_tensor: tf.Tensor):
     sparse_reco = input_tensor[..., 0:1]
-    prior = input_tensor[..., 1:2]
-    full_reco = input_tensor[..., 2:3]
+    prior = input_tensor[..., 2:3]
+    full_reco = input_tensor[..., 1:2]
 
     sparse_reco = tf.cast(sparse_reco, dtype=tf.float32)
     prior = tf.cast(prior, dtype=tf.float32)
@@ -119,33 +119,33 @@ def insert_needle(image: tf.Tensor, annotation: tf.Tensor):
 
 
 @tf.function
-def _rotate(image: tf.Tensor, angle: tf.Tensor):
-    return tfa.image.rotate(image, angle, interpolation='BILINEAR', fill_value=-1000)
+def _rotate(image: tf.Tensor, angle: tf.Tensor, fill_value: float = -1000.0):
+    return tfa.image.rotate(image-fill_value, angle, interpolation='BILINEAR')+fill_value
 
 @tf.function
-def _translate(image: tf.Tensor):
+def _translate(image: tf.Tensor, fill_value: float = -1000.0):
     x = tf.random.uniform(minval=-50, maxval=50, dtype=tf.int32, shape=[])
     y = tf.random.uniform(minval=-50, maxval=50, dtype=tf.int32, shape=[])
-    return tfa.image.translate(image, [x, y], interpolation='nearest', fill_value=-1000)
+    return tfa.image.translate(image-fill_value, [x, y], interpolation='nearest')+fill_value
 
 @tf.function
 def _flip(image: tf.Tensor):
     return tf.image.flip_left_right(image)
 
 @tf.function
-def _flip_rotate(image: tf.Tensor, angle: tf.Tensor):
+def _flip_rotate(image: tf.Tensor, angle: tf.Tensor, fill_value: float = -1000.0):
     image = tf.image.flip_left_right(image)
-    return tfa.image.rotate(image, angle, interpolation='BILINEAR', fill_value=-1000)
+    return tfa.image.rotate(image-fill_value, angle, interpolation='BILINEAR')+fill_value
 
 @tf.function
-def _scale(image: tf.Tensor, ratio: tf.Tensor, dim=[384, 384, 1]):
+def _scale(image: tf.Tensor, ratio: tf.Tensor, dim=[384, 384, 1], fill_value: float = -1000.0):
     print(ratio)
     x1 = y1 = 0.5 - (0.5 * ratio)
     x2 = y2 = 0.5 + (0.5 * ratio)
     boxes = [x1,y1,x2,y2]
     boxes = tf.cast(tf.reshape(boxes, shape=(1,4)), dtype=tf.float32)
-    scaled = tf.image.crop_and_resize([image], boxes=boxes, box_indices=tf.zeros(1, dtype=tf.int32),
-                                        crop_size=(dim[0], dim[1]), extrapolation_value=-1000)
+    scaled = tf.image.crop_and_resize([image-fill_value], boxes=boxes, box_indices=tf.zeros(1, dtype=tf.int32),
+                                        crop_size=(dim[0], dim[1]))+fill_value
     scaled = tf.reshape(scaled, shape=(dim[0], dim[1], dim[2]))
     #return tf.cast(scaled, dtype=tf.float16)
     return scaled
@@ -184,6 +184,7 @@ def mssim(dim, weight=1., paddings=None):
         ms_ssim = weight * tf.image.ssim_multiscale(y_true, y_pred, max_val=1.)
         return ms_ssim
     return masked_mssim
+
 
 def _bytes_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
