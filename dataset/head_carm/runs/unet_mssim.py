@@ -3,23 +3,24 @@ expt = Experiment(seed=42)
 
 from utility.common_imports import *
 from utility.constants import *
+
 import argparse
 
-from dataset.head_carm.utility.dataset_creation import generate_perceptual_dataset
-from dataset.head_carm.models import unet
-from utility.utils import ssim, psnr, mse, lr_scheduler_linear, multiscale_ssim_l2, mssim
+from dataset.head_carm.models.prior_unet import unet
+from utility.utils import ssim, psnr, mse, mssim, multiscale_ssim_l2
 from utility.weight_norm import AdamWithWeightnorm
 from utility.logger_utils_prior import PlotReconstructionCallback
 from dataset.head_carm.utility.constants import *
 from tensorflow.keras.callbacks import LearningRateScheduler as LRS
+from dataset.head_carm.utility.dataset_creation import generate_datasets
 
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of training epochs')
-parser.add_argument('-bs', '--batch', type=int, default=64, help='Batch size for training')
-parser.add_argument('-bf', '--buffer', type=int, default=512, help='Buffer size for shuffling')
+parser.add_argument('-bs', '--batch', type=int, default=88, help='Batch size for training')
+parser.add_argument('-bf', '--buffer', type=int, default=1024, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
-parser.add_argument('-g', '--gpu', type=str, default='0, 1', help='gpu num')
+parser.add_argument('-g', '--gpu', type=str, default='1', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
 parser.add_argument('-eager', '--eager', type=bool, default=False, help='eager mode')
 parser.add_argument('-path', '--path', type=str, default='/project/sghosh/experiments/', help='path to experiments folder')
@@ -37,26 +38,37 @@ epochs = args.epochs
 buffer = args.buffer  # for shuffling
 d = args.d
 lr = args.lr
-augm_no = 1
 save_by = 'val_masked_ssim'
 show_summary = True
 is_eager = args.eager
 scratch_dir = args.path
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
-ds, vds, teds = generate_perceptual_dataset(IMGS_2D_SHARDS_PATH, bs, buffer)
-steps = (TRAIN_NUM * augm_no) // bs
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        print(e)
 
-NAME = 'Unet_Prior_needlev2_SSIM_MSE_priorangle15'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'
-CHKPNT_PATH = scratch_dir+'carmh/UnetPrior_needlev2_SSIM_MSE__priorangle15_seed'+str(expt.get_seed())+'/chkpnt/'
+ds, vds, teds = generate_datasets(bs, buffer)
+steps = (TRAIN_NUM * AUG_NUM) // bs
+
+NAME = 'Unet_Prior_needle_SSIM'+ '_D' + str(d) + 'Lr' + str(lr)
+CHKPNT_PATH = os.path.join(scratch_dir, NAME+str(expt.get_seed()), 'chkpnt/')
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
-# Create a MirroredStrategy.
-strategy = tf.distribute.MirroredStrategy()
-print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
+def run_distributed_training():
+    # Create a MirroredStrategy.
+    strategy = tf.distribute.MirroredStrategy()
+    print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
 
-# Open a s<trategy scope.
-with strategy.scope():
+    # Open a s<trategy scope.
+    with strategy.scope():
+        run_training()
+
+def run_training():
     act = tf.keras.layers.LeakyReLU(alpha=0.2)
 
     # Define model
@@ -71,13 +83,12 @@ with strategy.scope():
 
     model.compile(optimizer=optimizer,
                   run_eagerly=is_eager,
-                  loss=multiscale_ssim_l2(IMG_DIM_INP_2D, mse_weight=1., ssim_weight=1.0),
+                  loss=multiscale_ssim_l2(IMG_DIM_INP_2D, mse_weight=1., ssim_weight=1.),
                   metrics=[mse(IMG_DIM_INP_2D),
-                           ssim(IMG_DIM_INP_2D),
                            mssim(IMG_DIM_INP_2D),
+                           ssim(IMG_DIM_INP_2D),
                            psnr(IMG_DIM_INP_2D)
                            ])
-
     model.summary()
     model.run_eagerly = is_eager  # set true if debug on
 
@@ -89,6 +100,7 @@ with strategy.scope():
                                            test_ds=teds,
                                            chkpoint_path=CHKPNT_PATH,
                                            save_by=save_by,
+                                           is_shuffle=True,
                                            save_by_decrease=False,
                                            log_on_epoch_end=True,
                                            step_num=1000
@@ -105,17 +117,25 @@ with strategy.scope():
                                               min_lr=1e-8,
                                               min_delta=0.01)
 
-    lrs = LRS(lr_scheduler_linear, verbose=1)
-    callbacks = [tensorboard_clbk, plot_clbk, chkpnt_cb]
+    callbacks = [tensorboard_clbk, chkpnt_cb, plot_clbk]
 
     try:
-        ckpt = tf.train.Checkpoint( net=model, optimizer=optimizer)
+        ckpt = tf.train.Checkpoint(net=model, optimizer=optimizer)
         ckpt.restore(os.path.join(CHKPNT_PATH , CHKPOINT_NAME))
         print("Restored from {}".format(CHKPNT_PATH))
     except:
         print("Initializing from scratch.")
 
     # # Fit
-    #model.summary()
-    model.fit(ds, validation_data=vds, epochs=epochs, callbacks=callbacks,
-              steps_per_epoch=steps, validation_steps=VAL_NUM // bs)
+    model.fit(
+        ds,
+        validation_data=vds,
+        epochs=epochs,
+        callbacks=callbacks,
+        steps_per_epoch=steps,
+        validation_steps=VAL_NUM // bs
+    )
+
+
+if __name__ == '__main__':
+    run_distributed_training()

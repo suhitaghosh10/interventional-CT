@@ -17,10 +17,10 @@ from dataset.head_carm.utility.dataset_creation import generate_datasets
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of training epochs')
-parser.add_argument('-bs', '--batch', type=int, default=32, help='Batch size for training')
-parser.add_argument('-bf', '--buffer', type=int, default=2, help='Buffer size for shuffling')
+parser.add_argument('-bs', '--batch', type=int, default=88, help='Batch size for training')
+parser.add_argument('-bf', '--buffer', type=int, default=1024, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
-parser.add_argument('-g', '--gpu', type=str, default='0,1', help='gpu num')
+parser.add_argument('-g', '--gpu', type=str, default='0', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
 parser.add_argument('-eager', '--eager', type=bool, default=False, help='eager mode')
 parser.add_argument('-path', '--path', type=str, default='/project/sghosh/experiments/', help='path to experiments folder')
@@ -38,7 +38,6 @@ epochs = args.epochs
 buffer = args.buffer  # for shuffling
 d = args.d
 lr = args.lr
-augm_no = 1
 save_by = 'val_masked_ssim'
 show_summary = True
 is_eager = args.eager
@@ -53,11 +52,11 @@ if gpus:
     except RuntimeError as e:
         print(e)
 
-ds, vds, _ = generate_datasets(bs, buffer)
-steps = (TRAIN_NUM * augm_no) // bs
+ds, vds, teds = generate_datasets(bs, buffer)
+steps = (TRAIN_NUM * AUG_NUM) // bs
 
-NAME = 'Unet_Prior_needle2_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'
-CHKPNT_PATH = scratch_dir+'carmhtest/UnetPrior_needle2_seed'+str(expt.get_seed())+'/chkpnt/'
+NAME = 'Unet_Prior_needle_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_d'
+CHKPNT_PATH = os.path.join(scratch_dir, NAME+str(expt.get_seed()), 'chkpnt/')
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
 def run_distributed_training():
@@ -96,14 +95,15 @@ def run_training():
     TENSORBOARD_PATH = os.path.join('/scratch/sghosh/VAE/logdir', 'Unet_Prior_'+DATASET_NAME, NAME)
     tensorboard_clbk = tfk.callbacks.TensorBoard(log_dir=TENSORBOARD_PATH)
 
-    # plot_clbk = PlotReconstructionCallback(logdir=TENSORBOARD_PATH,
-    #                                        test_ds=teds,
-    #                                        chkpoint_path=CHKPNT_PATH,
-    #                                        save_by=save_by,
-    #                                        save_by_decrease=False,
-    #                                        log_on_epoch_end=True,
-    #                                        step_num=1000
-    #                                        )
+    plot_clbk = PlotReconstructionCallback(logdir=TENSORBOARD_PATH,
+                                           test_ds=teds,
+                                           chkpoint_path=CHKPNT_PATH,
+                                           save_by=save_by,
+                                           is_shuffle=True,
+                                           save_by_decrease=False,
+                                           log_on_epoch_end=True,
+                                           step_num=1000
+                                           )
     chkpnt_cb = tfk.callbacks.ModelCheckpoint(os.path.join(CHKPNT_PATH, CHKPOINT_NAME),
                                               monitor=save_by,
                                               verbose=1,
@@ -117,7 +117,7 @@ def run_training():
                                               min_delta=0.01)
 
     lrs = LRS(lr_scheduler_linear, verbose=1)
-    callbacks = [tensorboard_clbk, chkpnt_cb]
+    callbacks = [tensorboard_clbk, chkpnt_cb, plot_clbk]
 
     try:
         ckpt = tf.train.Checkpoint(net=model, optimizer=optimizer)
@@ -127,7 +127,6 @@ def run_training():
         print("Initializing from scratch.")
 
     # # Fit
-    #model.summary()
     model.fit(
         ds,
         validation_data=vds,
