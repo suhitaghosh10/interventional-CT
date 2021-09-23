@@ -25,7 +25,7 @@ TRAIN = 'train'
 VAL = 'val'
 TEST = 'test'
 
-SPARSE_PROJECTION_NUM = 15
+SPARSE_PROJECTION_NUM = 13
 TOTAL_PROJECTION_NUM = 360
 
 
@@ -413,7 +413,7 @@ def _reconstruct_3D_poc(vol_projections, voxel_size, volume_shape, ndl_projectio
 
     # create reconstruction of interventional volume w/ sparse projections
     sparse_with_needle = reconstruct_volume_from_projections(
-        vol_ndl_projections[..., ::vol_ndl_projections.shape[-1]//num_sparse_projections],
+        vol_ndl_projections[..., ::vol_ndl_projections.shape[-1]//num_sparse_projections + num_sparse_projections % 2],
         sparse_radon, voxel_dims, voxel_size)
 
     return np.stack((sparse_with_needle, full_with_needle), -1)
