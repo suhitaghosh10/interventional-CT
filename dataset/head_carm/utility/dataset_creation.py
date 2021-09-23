@@ -25,7 +25,7 @@ TRAIN = 'train'
 VAL = 'val'
 TEST = 'test'
 
-SPARSE_PROJECTION_NUM = 18
+SPARSE_PROJECTION_NUM = 15
 TOTAL_PROJECTION_NUM = 360
 
 
@@ -488,7 +488,12 @@ def generate_validation_record(subject_list: List[str], out_path: str,
     subject_dir = HEAD_PROJECTIONS if subject_dir is None else subject_dir
     prior_dir = HEAD_PRIORS
     needle_dir = NEEDLE_PROJECTIONS if needle_dir is None else needle_dir
-    needle_files = [n for n in os.listdir(needle_dir) if n.endswith('.tfrecord')]
+    needle_files = [
+        n for n in os.listdir(needle_dir)
+        if n.endswith('.tfrecord')
+        and 'upperPart' not in n
+        and 'lowerPart' not in n
+    ]
     subject_needle_combinations = [
         (x+'.tfrecord', y) for x in subject_list for y in needle_files
     ]
@@ -534,7 +539,7 @@ def create_validation_set_record():
         valid_subjects = json.load(file_handle)['valid_subjects']
     generate_validation_record(
         valid_subjects,
-        'ds_validation',
+        os.path.join('ds_validation', f'{SPARSE_PROJECTION_NUM}'),
         subject_dir='/mnt/nvme2/mayoclinic/Head/high_dose_projections',
         needle_dir='/home/phernst/Documents/git/ictdl/needle_projections')
 
@@ -544,7 +549,7 @@ def create_test_set_record():
         test_subjects = json.load(file_handle)['test_subjects']
     generate_validation_record(
         test_subjects,
-        'ds_test',
+        os.path.join('ds_test', f'{SPARSE_PROJECTION_NUM}'),
         subject_dir='/mnt/nvme2/mayoclinic/Head/high_dose_projections',
         needle_dir='/home/phernst/Documents/git/ictdl/needle_projections')
 
@@ -554,4 +559,6 @@ if __name__ == '__main__':
     for gpu in tf.config.experimental.list_physical_devices('GPU'):
         tf.config.experimental.set_memory_growth(gpu, True)
     # test_reconstruction(16, 2)
-    test_validation_data()
+    # test_validation_data()
+    create_validation_set_record()
+    create_test_set_record()
