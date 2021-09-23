@@ -2,6 +2,7 @@ import os
 import json
 import tensorflow as tf
 import torch
+from tqdm import tqdm
 from dataset.head_carm.utility.constants import *
 from utility.ict_system import ArtisQSystem, DetectorBinning
 from typing import Tuple
@@ -11,6 +12,7 @@ import numpy as np
 from utility.constants import *
 from utility.utils import rotate, flip_rotate, flip, scale
 from utility.ct_utils import mu2hu, hu2mu, filter_sinogram_3d
+import psutil
 
 
 def generate_datasets(batch_size=1, buffer_size=1024):
@@ -39,7 +41,7 @@ def generate_datasets(batch_size=1, buffer_size=1024):
     ndl_ds = needle_dataset.map(_decode_needle_projections)  # ([u, v, 360], [3], [3])
     ndl_ds = ndl_ds.map(_random_rotate)  # [u, v, 360]
     ndl_ds = ndl_ds.repeat()
-    ndl_ds = ndl_ds.shuffle(buffer_size=buffer_size)
+    # ndl_ds = ndl_ds.shuffle(buffer_size=buffer_size)
 
     # load prior helical scans
     file_paths = [
@@ -373,3 +375,46 @@ def test_validation_data():
     for _ in tqdm(range(num_iterations - 1)):
         _ = next(ds_iter)
     print(f'{(time() - t0)/num_iterations}s per batch')
+
+
+def test_dataset_generation():
+    process = psutil.Process(os.getpid())
+
+    from torch.utils.tensorboard import SummaryWriter
+    writer = SummaryWriter("logdir/memory_usage")
+
+    bs = 1
+    buffer = 1
+    tds, vds, teds = generate_datasets(bs, buffer)
+    tds_iter = iter(tds)
+    vds_iter = iter(vds)
+    teds_iter = iter(teds)
+    num_tds_iterations = TRAIN_NUM // bs
+    num_vds_iterations = VAL_NUM // bs
+    writer.add_scalar("RAM", process.memory_info().rss/10**9, 0)
+    for idx in tqdm(range(num_tds_iterations)):
+        _ = next(tds_iter)
+        if idx%100 == 0:
+            writer.add_scalar("RAM", process.memory_info().rss/10**9, idx+1)
+    writer.add_scalar("RAM", np.nan, num_tds_iterations+1)
+    for idx in tqdm(range(num_vds_iterations)):
+        _ = next(vds_iter)
+        if idx%100 == 0:
+            writer.add_scalar("RAM", process.memory_info().rss/10**9, num_tds_iterations+2+idx)
+    writer.add_scalar("RAM", np.nan, num_tds_iterations+num_vds_iterations+2)
+    _ = next(teds_iter)
+    writer.add_scalar("RAM", process.memory_info().rss/10**9, num_tds_iterations+num_vds_iterations+3)
+    writer.close()
+    print("done")
+
+
+if __name__ == '__main__':
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as e:
+            print(e)
+
+    test_dataset_generation()
