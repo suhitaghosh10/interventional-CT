@@ -2,9 +2,11 @@ import json
 import os
 from typing import Tuple, Union
 
-import cv2
+# import cv2
+from matplotlib import pyplot as plt
 import nibabel as nib
 import numpy as np
+from skimage.metrics import structural_similarity as skssim
 import tensorflow as tf
 
 from dataset.head_carm.models.prior_unet import unet
@@ -101,14 +103,18 @@ def extract_input_slices(subject_idx: int,
     gt_cor = elements_gt[:, xz_pos, :]
 
     cv2.imwrite(
-        os.path.join(save_path, 'sparse_cor.png'),
+        os.path.join(save_path, 'sparse_coronal.png'),
         windowing(sparse_cor, .3689, .3915)*255)
     cv2.imwrite(
-        os.path.join(save_path, 'prior_cor.png'),
+        os.path.join(save_path, 'prior_coronal.png'),
         windowing(prior_cor, .3689, .3915)*255)
     cv2.imwrite(
-        os.path.join(save_path, 'gt_cor.png'),
+        os.path.join(save_path, 'gt_coronal.png'),
         windowing(gt_cor, .3689, .3915)*255)
+
+    np.save(os.path.join(save_path, 'sparse_coronal.npy'), sparse_cor)
+    np.save(os.path.join(save_path, 'prior_coronal.npy'), prior_cor)
+    np.save(os.path.join(save_path, 'gt_coronal.npy'), gt_cor)
 
     # axial slices
     sparse_axial = elements_in[0, :, :, xy_pos]
@@ -124,6 +130,10 @@ def extract_input_slices(subject_idx: int,
     cv2.imwrite(
         os.path.join(save_path, 'gt_axial.png'),
         windowing(gt_axial, .3689, .3915)*255)
+
+    np.save(os.path.join(save_path, 'sparse_axial.npy'), sparse_axial)
+    np.save(os.path.join(save_path, 'prior_axial.npy'), prior_axial)
+    np.save(os.path.join(save_path, 'gt_axial.npy'), gt_axial)
 
 
 def generate_predictions(subject_idx: int,
@@ -166,13 +176,78 @@ def generate_predictions(subject_idx: int,
         cv2.imwrite(
             os.path.join(save_path, name+'_coronal.png'),
             windowing(arr.transpose()[:, xz_pos, :], .3689, .3915)*255)
+        np.save(os.path.join(save_path, name+'_axial.npy'), arr.transpose()[:, :, xy_pos])
+        np.save(os.path.join(save_path, name+'_coronal.npy'), arr.transpose()[:, xz_pos, :])
+
+
+def assemble_figure():
+    pred_path = os.path.join('experiments', 'predictions')
+
+    window_levels = {
+        '0_0': (0.0, 1.0),
+        '1_1': (.3689, .3915),
+    }
+
+    column_types = [
+        'sparse',
+        'gt',
+        'Unet_Prior_needle_MSE_D8Lr0.0001_S1342',
+        'Unet_Prior_needle_SSIM_D8Lr0.0001_S1342',
+        'Unet_Prior_needle_MSSIM_D8Lr0.0001_S1342',
+        'Unet_Prior_needle_LoG0.1_MSE10.0_D8Lr0.0001_S1342',
+        'Unet_Prior_needle_DCT_MSE_D8Lr0.0001_S1342',
+    ]
+
+    row_types = [
+        ('0_0', 'axial'),
+        ('1_1', 'axial'),
+        ('0_0', 'coronal'),
+        ('1_1', 'coronal'),
+    ]
+
+    fig, axs = plt.subplots(len(row_types), len(column_types))
+
+    def custom_psnr(pred, gt, max_val: float = 1.0):
+        return 10*np.log10(max_val**2/np.mean((pred - gt)**2))
+
+    for row_idx, row_item in enumerate(row_types):
+        for col_idx, col_item in enumerate(column_types):
+            img = np.load(os.path.join(pred_path, row_item[0], f'{col_item}_{row_item[1]}.npy'))
+            axs[row_idx, col_idx].imshow(
+                img,
+                vmin=window_levels[row_item[0]][0],
+                vmax=window_levels[row_item[0]][1],
+                cmap='gray')
+            axs[row_idx, col_idx].axis('off')
+            if col_idx != 1:
+                gt = np.load(os.path.join(pred_path, row_item[0], f'gt_{row_item[1]}.npy'))
+                psnr_val = custom_psnr(gt, img, max_val=1.)
+                ssim_val = skssim(gt, img, data_range=1.)*100
+                axs[row_idx, col_idx].text(0, 0, f'{psnr_val:.2f}, {ssim_val:.2f}', va='top', color='yellow')
+
+    axs[0, 0].set_title('Sparse')
+    axs[0, 1].set_title('GT')
+    axs[0, 2].set_title('MSE')
+    axs[0, 3].set_title('SSIM')
+    axs[0, 4].set_title('MSSIM')
+    axs[0, 5].set_title('LoG')
+    axs[0, 6].set_title('DCT')
+
+    axs[0, 0].set(ylabel='axial')
+    axs[1, 0].set(ylabel='axial')
+    axs[2, 0].set(ylabel='coronal')
+    axs[3, 0].set(ylabel='coronal')
+
+    fig.show()
+    plt.show()
 
 
 if __name__ == '__main__':
     # generate_predictions(subject_idx=0, needle_idx=0, roll=0, center=(0, 0, -50), xy_pos=145, xz_pos=208)
-    generate_predictions(subject_idx=1, needle_idx=1, roll=180, center=(0, 0, 0), xy_pos=278, xz_pos=173)
+    # generate_predictions(subject_idx=1, needle_idx=1, roll=180, center=(0, 0, 0), xy_pos=278, xz_pos=173)
     # extract_input_slices(subject_idx=0, needle_idx=0, roll=0, center=(0, 0, -50), xy_pos=145, xz_pos=208)
     # extract_input_slices(subject_idx=1, needle_idx=1, roll=180, center=(0, 0, 0), xy_pos=278, xz_pos=173)
+    assemble_figure()
 
 # test[0], needle[0], center=(0, 0, -50), 146/469, xz 209, window: [.3689, .3915]
 # test[1], needle[1], center=(0, 0, 0), 279/493, xz 174, roll 180
