@@ -1,10 +1,24 @@
 from utility.common_imports import *
 from utility.constants import *
+import nibabel as nib
+import nrrd
 import tensorflow_addons as tfa
 #from utility.tensorflow_imported.filter_ops import gaussian, laplacian
 AUGMENTATION_MAX_ANGLE = 1.0 #radian
 GAUSSIAN_SIGMA = 1.
 GAUSSIAN_LAPLACIAN_K_SIZE=7
+
+def load_nifty(path: str):
+    nifty_data = nib.load(path)
+    volume = nifty_data.get_fdata()
+    voxel_size = np.diag(nifty_data.affine)[:3]
+    return volume, voxel_size
+
+
+def load_nrrd(path: str):
+    volume, nrrd_header = nrrd.read(path)
+    voxel_size = np.diag(nrrd_header['space directions'])
+    return volume, voxel_size
 
 def ssim(dim, paddings=None):
     def masked_ssim(y_true, y_pred):
