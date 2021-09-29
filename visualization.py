@@ -341,7 +341,7 @@ def assemble_figure():
                 gt = np.load(os.path.join(pred_path, '1_1', f'gt_{row_item[1]}.npy'))
                 psnr_val = custom_psnr(gt, img, max_val=1.)
                 ssim_val = skssim(gt, img, data_range=1.)*100
-                axs[row_idx, col_idx].text(0, 0, f'{psnr_val:.2f}, {ssim_val:.2f}', va='top', color='yellow')
+                axs[row_idx, col_idx].text(0, 0, f'{psnr_val:.2f}dB, {ssim_val:.2f}\%', va='top', color='yellow')
 
     axs[0, 0].set_title(r'$\mathbf{LQ}$')
     axs[0, 1].set_title(r'$\mathbf{HQ}$')
@@ -355,21 +355,23 @@ def assemble_figure():
 
     img = np.array(Image.open('/home/phernst/Documents/Memorial/isbi2022/sirt_N177c_Needle2_Pos2_12_wide_window_registered.png'))[..., 0]
     axs[0, 8].imshow(img, cmap='gray')
+    axs[0, 8].text(0, 0, '23.90dB, 83.37\\%', va='top', color='yellow')
 
     img = np.array(Image.open('/home/phernst/Documents/Memorial/isbi2022/cor_N177c_Needle2_Pos2_12_wide_window_registered.png'))[..., 0]
     im1 = axs[1, 8].imshow(img, cmap='gray')
-    cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-    fig.colorbar(im1, cax=cbar_ax)
-    fig.subplots_adjust(right=0.8)
+    axs[1, 8].text(0, 0, '20.84dB, 79.06\\%', va='top', color='yellow')
+    # cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
+    # fig.colorbar(im1, cax=cbar_ax)
+    # fig.subplots_adjust(right=0.8)
 
     img = np.array(Image.open('/home/phernst/Documents/Memorial/isbi2022/sirt_N177c_Needle2_Pos2_12_registered.png'))[..., 0]
     axs[2, 8].imshow(img, cmap='gray')
 
     img = np.array(Image.open('/home/phernst/Documents/Memorial/isbi2022/cor_N177c_Needle2_Pos2_12_narrow_window_registered.png'))[..., 0]
     im2 = axs[3, 8].imshow(img, cmap='gray')
-    cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-    fig.colorbar(im2, cax=cbar_ax)
-    fig.subplots_adjust(right=0.8)
+    # cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
+    # fig.colorbar(im2, cax=cbar_ax)
+    # fig.subplots_adjust(right=0.8)
 
     for i in range(len(row_types)):
         axs[i, 8].axis('off')
@@ -380,7 +382,7 @@ def assemble_figure():
     axs[3, 0].set(ylabel='coronal')
 
     # fig.subplots_adjust(wspace=0.1, hspace=0.1)
-    # fig.tight_layout()
+    fig.tight_layout()
     plt.show()
 
 
