@@ -7,22 +7,24 @@ from utility.constants import *
 import argparse
 
 from dataset.head_carm.models.prior_unet import unet
-from utility.utils import ssim, psnr, mse, dct_mse, dct_and_pixelwise_mse
+from utility.utils import ssim, psnr, mse, lr_scheduler_linear, multiscale_ssim_l2, mssim
 from utility.weight_norm import AdamWithWeightnorm
 from utility.logger_utils_prior import PlotReconstructionCallback
 from dataset.head_carm.utility.constants import *
 from tensorflow.keras.callbacks import LearningRateScheduler as LRS
-from dataset.head_carm.utility.dataset_creation import generate_datasets
+from dataset.head_carm.utility.dataset_creation import generate_datasets_wo_prior
 
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of training epochs')
-parser.add_argument('-bs', '--batch', type=int, default=72, help='Batch size for training')
-parser.add_argument('-bf', '--buffer', type=int, default=256, help='Buffer size for shuffling')
+parser.add_argument('-bs', '--batch', type=int, default=2, help='Batch size for training')
+parser.add_argument('-bf', '--buffer', type=int, default=2, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
-parser.add_argument('-g', '--gpu', type=str, default='3', help='gpu num')
+parser.add_argument('-g', '--gpu', type=str, default='1', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
 parser.add_argument('-eager', '--eager', type=bool, default=False, help='debug/eager mode')
+parser.add_argument('-v', '--v', type=str, default=VALIDATION_RECORDS_13_PATH, help='validation path')
+parser.add_argument('-t', '--t', type=str, default=TEST_RECORDS_13_PATH, help='test path')
 parser.add_argument('-path', '--path', type=str, default='/project/sghosh/experiments/', help='path to experiments folder')
 
 args = parser.parse_args()
@@ -42,6 +44,8 @@ save_by = 'val_masked_ssim'
 show_summary = True
 is_eager = args.eager
 scratch_dir = args.path
+val_path = args.v
+test_path = args.t
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -52,10 +56,10 @@ if gpus:
     except RuntimeError as e:
         print(e)
 
-ds, vds, teds = generate_datasets(bs, buffer)
+ds, vds, teds = generate_datasets_wo_prior(val_path, test_path, bs, buffer)
 steps = (TRAIN_NUM * AUG_NUM) // bs
 
-NAME = 'Unet_Prior_needle_DCT_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_S'+str(SPARSE_PROJECTION_NUM)
+NAME = 'Unet_woPrior_needle_MSSIM'+ '_D' + str(d) + 'Lr' + str(lr)+ '_S'+str(SPARSE_PROJECTION_NUM)
 CHKPNT_PATH = os.path.join(scratch_dir, NAME+str(expt.get_seed()), 'chkpnt/')
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
@@ -83,11 +87,11 @@ def run_training():
 
     model.compile(optimizer=optimizer,
                   run_eagerly=is_eager,
-                  loss=dct_and_pixelwise_mse(IMG_DIM_INP_2D),
+                  loss=multiscale_ssim_l2(IMG_DIM_INP_2D, mse_weight=1., ssim_weight=1.),
                   metrics=[mse(IMG_DIM_INP_2D),
                            ssim(IMG_DIM_INP_2D),
                            psnr(IMG_DIM_INP_2D),
-                           dct_mse(IMG_DIM_INP_2D)
+                           mssim(IMG_DIM_INP_2D),
                            ])
     model.summary()
     model.run_eagerly = is_eager  # set true if debug on
@@ -114,7 +118,7 @@ def run_training():
                                               save_weights_only=True)
     es = tfk.callbacks.EarlyStopping(monitor=save_by, mode='max', verbose=1, patience=20, min_delta=1e-3)
     # LRDecay = tfk.callbacks.ReduceLROnPlateau(monitor=save_by, factor=0.5, patience=5, verbose=1, mode='max',
-    #                                           min_lr=1e-8,
+    #                                           min_lr=1e-8,<<<
     #                                           min_delta=0.01)
     #
     # lrs = LRS(lr_scheduler_linear, verbose=1)

@@ -1,6 +1,6 @@
 from utility.common_imports import *
 class Experiment():
-    def __init__(self, seed=456):
+    def __init__(self, seed=42):
         self.seed = seed
         # Set a seed value
         # 1. Set `PYTHONHASHSEED` environment variable at a fixed value

@@ -7,7 +7,7 @@ from utility.constants import *
 import argparse
 
 from dataset.head_carm.models.prior_unet import unet
-from utility.utils import ssim, psnr, mse, dct_mse, dct_and_pixelwise_mse
+from utility.utils import ssim, psnr, mse, dct_mae, dct_and_pixelwise_mae
 from utility.weight_norm import AdamWithWeightnorm
 from utility.logger_utils_prior import PlotReconstructionCallback
 from dataset.head_carm.utility.constants import *
@@ -55,7 +55,7 @@ if gpus:
 ds, vds, teds = generate_datasets(bs, buffer)
 steps = (TRAIN_NUM * AUG_NUM) // bs
 
-NAME = 'Unet_Prior_needle_DCT_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_S'+str(SPARSE_PROJECTION_NUM)
+NAME = 'Unet_Prior_needle_DCT_MAE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_S'+str(SPARSE_PROJECTION_NUM)
 CHKPNT_PATH = os.path.join(scratch_dir, NAME+str(expt.get_seed()), 'chkpnt/')
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
@@ -83,11 +83,11 @@ def run_training():
 
     model.compile(optimizer=optimizer,
                   run_eagerly=is_eager,
-                  loss=dct_and_pixelwise_mse(IMG_DIM_INP_2D),
+                  loss=dct_and_pixelwise_mae(IMG_DIM_INP_2D),
                   metrics=[mse(IMG_DIM_INP_2D),
                            ssim(IMG_DIM_INP_2D),
                            psnr(IMG_DIM_INP_2D),
-                           dct_mse(IMG_DIM_INP_2D)
+                           dct_mae(IMG_DIM_INP_2D)
                            ])
     model.summary()
     model.run_eagerly = is_eager  # set true if debug on

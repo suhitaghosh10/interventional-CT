@@ -17,11 +17,13 @@ from dataset.head_carm.utility.dataset_creation import generate_datasets
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of training epochs')
-parser.add_argument('-bs', '--batch', type=int, default=88, help='Batch size for training')
-parser.add_argument('-bf', '--buffer', type=int, default=1024, help='Buffer size for shuffling')
+parser.add_argument('-bs', '--batch', type=int, default=72, help='Batch size for training')
+parser.add_argument('-bf', '--buffer', type=int, default=256, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
-parser.add_argument('-g', '--gpu', type=str, default='1', help='gpu num')
+parser.add_argument('-g', '--gpu', type=str, default='0', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
+parser.add_argument('-v', '--v', type=str, default=VALIDATION_RECORDS_15_PATH, help='validation path')
+parser.add_argument('-t', '--t', type=str, default=TEST_RECORDS_15_PATH, help='test path')
 parser.add_argument('-eager', '--eager', type=bool, default=False, help='eager mode')
 parser.add_argument('-path', '--path', type=str, default='/project/sghosh/experiments/', help='path to experiments folder')
 
@@ -38,10 +40,12 @@ epochs = args.epochs
 buffer = args.buffer  # for shuffling
 d = args.d
 lr = args.lr
-save_by = 'val_masked_ssim'
+save_by = 'val_masked_psnr'
 show_summary = True
 is_eager = args.eager
 scratch_dir = args.path
+val_path = args.v
+test_path = args.t
 os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -52,10 +56,10 @@ if gpus:
     except RuntimeError as e:
         print(e)
 
-ds, vds, teds = generate_datasets(bs, buffer)
+ds, vds, teds = generate_datasets(val_path, test_path, bs, buffer)
 steps = (TRAIN_NUM * AUG_NUM) // bs
 
-NAME = 'Unet_Prior_needle_SSIM'+ '_D' + str(d) + 'Lr' + str(lr)
+NAME = 'Unet_Prior_needle_MSSIM'+ '_D' + str(d) + 'Lr' + str(lr)+ '_S'+str(SPARSE_PROJECTION_NUM)
 CHKPNT_PATH = os.path.join(scratch_dir, NAME+str(expt.get_seed()), 'chkpnt/')
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
@@ -112,12 +116,12 @@ def run_training():
                                               mode='max',
                                               save_best_only=True,
                                               save_weights_only=True)
-    es = tfk.callbacks.EarlyStopping(monitor=save_by, mode='max', verbose=1, patience=50, min_delta=1e-4)
-    LRDecay = tfk.callbacks.ReduceLROnPlateau(monitor=save_by, factor=0.5, patience=5, verbose=1, mode='max',
-                                              min_lr=1e-8,
-                                              min_delta=0.01)
+    es = tfk.callbacks.EarlyStopping(monitor=save_by, mode='max', verbose=1, patience=20, min_delta=1e-3)
+    # LRDecay = tfk.callbacks.ReduceLROnPlateau(monitor=save_by, factor=0.5, patience=5, verbose=1, mode='max',
+    #                                           min_lr=1e-8,
+    #                                           min_delta=0.01)
 
-    callbacks = [tensorboard_clbk, chkpnt_cb, plot_clbk]
+    callbacks = [tensorboard_clbk, chkpnt_cb, plot_clbk, es]
 
     try:
         ckpt = tf.train.Checkpoint(net=model, optimizer=optimizer)

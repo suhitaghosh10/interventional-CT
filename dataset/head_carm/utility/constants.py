@@ -19,11 +19,20 @@ IMG_DIM_INP_2D = (384, 384, 1)
 #IMGS_2D_SHARDS_PATH = '/project/sghosh/dataset/carm_head/tf_shards/'
 #IMGS_2D_DCT_SHARDS_PATH = '/project/sghosh/dataset/carm_head/dct/tf_shards/'
 
+
 TRAIN_HELICAL_PRIOR_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/validation/priors/'
 TRAIN_CONEBEAM_PROJECTIONS_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/high_dose_projections/cone-beam/'
 NEEDLE_PROJECTIONS_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/high_dose_projections/needles/'
-VALIDATION_RECORDS_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/validation/'
-TEST_RECORDS_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/test/'
+VALIDATION_RECORDS_18_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/validation/'
+TEST_RECORDS_18_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/test/'
+VALIDATION_RECORDS_2_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/validation/2/'
+TEST_RECORDS_2_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/test/2/'
+VALIDATION_RECORDS_13_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/validation/13/'
+TEST_RECORDS_13_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/test/13/'
+VALIDATION_RECORDS_15_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/validation/15/'
+TEST_RECORDS_15_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/test/15/'
+VALIDATION_RECORDS_4_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/validation/4/'
+TEST_RECORDS_4_PATH: str = '/project/sghosh/dataset/mayoclinic/Head/test/4/'
 #JSON_PATH:str = '../utility/train_valid_test.json'
 JSON_PATH:str = 'dataset/head_carm/utility/train_valid_test.json'
 
@@ -33,8 +42,8 @@ CARMH_GT_LOW_5_PERCENTILE: float = -1253.4764404296875
 CARMH_GT_UPPER_99_PERCENTILE: float = 1720.43359375
 #CARM_DCT_MIN = -73.75
 #CARM_DCT_MAX = 169.0
-CARM_DCT_MIN: float = -3.691
-CARM_DCT_MAX: float = 8.01
+CARM_DCT_MIN: float = -25998.479
+CARM_DCT_MAX: float = 43110.605
 
 
 ##### NEVER EVER DEFINE ANY TENSORFLOW VARIABLE HERE!!!!!!

@@ -7,7 +7,7 @@ from utility.constants import *
 import argparse
 
 from dataset.head_carm.models.prior_unet import unet
-from utility.utils import ssim, psnr, mse, dct_mse, dct_and_pixelwise_mse
+from utility.utils import ssim, psnr, mse, dct_mse, blockwisedct_and_pixelwise_mse, blockwisedct_mse
 from utility.weight_norm import AdamWithWeightnorm
 from utility.logger_utils_prior import PlotReconstructionCallback
 from dataset.head_carm.utility.constants import *
@@ -20,7 +20,7 @@ parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of tr
 parser.add_argument('-bs', '--batch', type=int, default=72, help='Batch size for training')
 parser.add_argument('-bf', '--buffer', type=int, default=256, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
-parser.add_argument('-g', '--gpu', type=str, default='3', help='gpu num')
+parser.add_argument('-g', '--gpu', type=str, default='2', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
 parser.add_argument('-eager', '--eager', type=bool, default=False, help='debug/eager mode')
 parser.add_argument('-path', '--path', type=str, default='/project/sghosh/experiments/', help='path to experiments folder')
@@ -55,7 +55,7 @@ if gpus:
 ds, vds, teds = generate_datasets(bs, buffer)
 steps = (TRAIN_NUM * AUG_NUM) // bs
 
-NAME = 'Unet_Prior_needle_DCT_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_S'+str(SPARSE_PROJECTION_NUM)
+NAME = 'Unet_Prior_needle_blockwiseDCT_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_S'+str(SPARSE_PROJECTION_NUM)
 CHKPNT_PATH = os.path.join(scratch_dir, NAME+str(expt.get_seed()), 'chkpnt/')
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
@@ -83,11 +83,11 @@ def run_training():
 
     model.compile(optimizer=optimizer,
                   run_eagerly=is_eager,
-                  loss=dct_and_pixelwise_mse(IMG_DIM_INP_2D),
+                  loss=blockwisedct_and_pixelwise_mse(IMG_DIM_INP_2D),
                   metrics=[mse(IMG_DIM_INP_2D),
                            ssim(IMG_DIM_INP_2D),
                            psnr(IMG_DIM_INP_2D),
-                           dct_mse(IMG_DIM_INP_2D)
+                           blockwisedct_mse(IMG_DIM_INP_2D)
                            ])
     model.summary()
     model.run_eagerly = is_eager  # set true if debug on

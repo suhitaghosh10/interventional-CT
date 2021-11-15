@@ -12,13 +12,13 @@ from utility.weight_norm import AdamWithWeightnorm
 from utility.logger_utils_prior import PlotReconstructionCallback
 from dataset.head_carm.utility.constants import *
 from tensorflow.keras.callbacks import LearningRateScheduler as LRS
-from dataset.head_carm.utility.dataset_creation import generate_datasets
+from dataset.head_carm.utility.dataset_creation import generate_dct_datasets
 
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', '--epochs', type=int, default=2000, help='Number of training epochs')
 parser.add_argument('-bs', '--batch', type=int, default=72, help='Batch size for training')
-parser.add_argument('-bf', '--buffer', type=int, default=256, help='Buffer size for shuffling')
+parser.add_argument('-bf', '--buffer', type=int, default=2, help='Buffer size for shuffling')
 parser.add_argument('-d', '--d', type=int, default=8, help='starting embeddding dim')  # 128
 parser.add_argument('-g', '--gpu', type=str, default='3', help='gpu num')
 parser.add_argument('-l', '--lr', type=float, default=1e-4, help='learning rate')
@@ -52,10 +52,10 @@ if gpus:
     except RuntimeError as e:
         print(e)
 
-ds, vds, teds = generate_datasets(bs, buffer)
+ds, vds, teds = generate_dct_datasets(bs, buffer)
 steps = (TRAIN_NUM * AUG_NUM) // bs
 
-NAME = 'Unet_Prior_needle_DCT_MSE'+ '_D' + str(d) + 'Lr' + str(lr)+ '_S'+str(SPARSE_PROJECTION_NUM)
+NAME = 'Unet_Prior_needle_Input_DCT'+ '_D' + str(d) + 'Lr' + str(lr)+ '_S'+str(SPARSE_PROJECTION_NUM)
 CHKPNT_PATH = os.path.join(scratch_dir, NAME+str(expt.get_seed()), 'chkpnt/')
 os.makedirs(CHKPNT_PATH, exist_ok=True)
 
@@ -83,11 +83,10 @@ def run_training():
 
     model.compile(optimizer=optimizer,
                   run_eagerly=is_eager,
-                  loss=dct_and_pixelwise_mse(IMG_DIM_INP_2D),
-                  metrics=[mse(IMG_DIM_INP_2D),
-                           ssim(IMG_DIM_INP_2D),
-                           psnr(IMG_DIM_INP_2D),
-                           dct_mse(IMG_DIM_INP_2D)
+                  loss=mse(IMG_DIM_INP_2D, weight=1000.),
+                  metrics=[mse(IMG_DIM_INP_2D, apply_idct=True, dct_min=0, dct_max=CARM_DCT_MAX),
+                           ssim(IMG_DIM_INP_2D, apply_idct=True, dct_min=0, dct_max=CARM_DCT_MAX),
+                           psnr(IMG_DIM_INP_2D, apply_idct=True, dct_min=0, dct_max=CARM_DCT_MAX)
                            ])
     model.summary()
     model.run_eagerly = is_eager  # set true if debug on
