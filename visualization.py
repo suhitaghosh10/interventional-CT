@@ -113,7 +113,7 @@ def create_figure1_images():
         if 'upperPart' not in f and 'lowerPart' not in f][needle_idx])
     print(needle_file)
 
-    test_ds = generate_testset(None, 0, 0, 0, (0, 0, 0))
+    test_ds = generate_testset(None, 0, 0, 0, (0, 0, -50))
     elements_in = np.concatenate([e for e, _ in test_ds], axis=-1).transpose(0, 2, 1, 3)
     elements_gt = np.concatenate([e for _, e in test_ds], axis=-1).transpose(1, 0, 2)
 
@@ -130,20 +130,27 @@ def create_figure1_images():
     sparse_vol = reco.transpose()[0]
 
     # slice 264, [.3519, .4149]
-    window_full = (.3519, .4149)
+    # axial_idx = 264
+    # window_full = (.3519, .4149)
+    # window_sparse = (.2090, .6444)
+
+    # slice 149
+    axial_idx = 149
     window_sparse = (.2090, .6444)
+    window_full = window_sparse  # (.3519, .4149)
+
     cv2.imwrite(
         os.path.join('visualization', 'sparse_needle.png'),
-        windowing(sparse_needle_vol[264], window_sparse[0], window_sparse[1])*255)
+        windowing(sparse_needle_vol[axial_idx], window_sparse[0], window_sparse[1])*255)
     cv2.imwrite(
         os.path.join('visualization', 'gt_needle.png'),
-        windowing(gt_needle_vol[264], window_full[0], window_full[1])*255)
+        windowing(gt_needle_vol[axial_idx], window_full[0], window_full[1])*255)
     cv2.imwrite(
         os.path.join('visualization', 'gt.png'),
-        windowing(gt_vol[264], window_full[0], window_full[1])*255)
+        windowing(gt_vol[axial_idx], window_full[0], window_full[1])*255)
     cv2.imwrite(
         os.path.join('visualization', 'sparse.png'),
-        windowing(sparse_vol[264], window_sparse[0], window_sparse[1])*255)
+        windowing(sparse_vol[axial_idx], window_sparse[0], window_sparse[1])*255)
 
 
 def get_model(path: str):
@@ -341,7 +348,7 @@ def assemble_figure():
                 gt = np.load(os.path.join(pred_path, '1_1', f'gt_{row_item[1]}.npy'))
                 psnr_val = custom_psnr(gt, img, max_val=1.)
                 ssim_val = skssim(gt, img, data_range=1.)*100
-                axs[row_idx, col_idx].text(0, 0, f'{psnr_val:.2f}dB, {ssim_val:.2f}\%', va='top', color='yellow')
+                axs[row_idx, col_idx].text(0, 0, f'{psnr_val:.2f}dB, {ssim_val:.2f}\\%', va='top', color='yellow')
 
     axs[0, 0].set_title(r'$\mathbf{LQ}$')
     axs[0, 1].set_title(r'$\mathbf{HQ}$')
@@ -463,8 +470,8 @@ if __name__ == '__main__':
     # generate_predictions(subject_idx=1, needle_idx=1, roll=180, center=(0, 0, 0), xy_pos=278, xz_pos=170)
     # extract_input_slices(subject_idx=0, needle_idx=0, roll=0, center=(0, 0, -50), xy_pos=145, xz_pos=208)
     # extract_input_slices(subject_idx=1, needle_idx=1, roll=180, center=(0, 0, 0), xy_pos=278, xz_pos=170)
-    assemble_figure()
-    # create_figure1_images()
+    # assemble_figure()
+    create_figure1_images()
     # roi_figure_images()
     # calculate_all_window_values()
 
