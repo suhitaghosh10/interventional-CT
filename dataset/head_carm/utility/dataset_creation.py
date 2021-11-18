@@ -1,19 +1,21 @@
 import os
 import json
+from typing import Tuple
+
+import numpy as np
 import tensorflow as tf
 import torch
-from dataset.head_carm.utility.constants import *
-from utility.ict_system import ArtisQSystem, DetectorBinning
-from typing import Tuple
 from torch_radon import ConeBeam
 from torch_radon.volumes import Volume3D
-import numpy as np
+
+from dataset.head_carm.utility.constants import *
 from utility.constants import *
-from utility.utils import rotate, flip_rotate, flip, scale
 from utility.ct_utils import mu2hu, hu2mu, filter_sinogram_3d
+from utility.ict_system import ArtisQSystem, DetectorBinning
+from utility.utils import rotate, flip_rotate, flip, scale
+
 
 def generate_test_dataset(path):
-
     # test set, unbatched
     file_paths = [
         os.path.join(path, filename)
@@ -32,14 +34,14 @@ def generate_test_dataset(path):
 
     return teds
 
-def generate_datasets(val_path, test_path, batch_size, buffer_size=1024):
 
-    #load training subjects
+def generate_datasets(val_path, test_path, batch_size, buffer_size=1024):
+    # load training subjects
     with open(JSON_PATH, 'r') as file_handle:
         json_dict = json.load(file_handle)
         train_subjects = json_dict['train_subjects']
 
-    # load con-beam projections of head
+    # load cone-beam projections of chest
     file_paths = [
         os.path.join(TRAIN_CONEBEAM_PROJECTIONS_PATH, f'{tr}.tfrecord')
         for tr in train_subjects
@@ -67,21 +69,41 @@ def generate_datasets(val_path, test_path, batch_size, buffer_size=1024):
     ]
     prior_ds = tf.data.TFRecordDataset(file_paths)
     prior_ds = prior_ds.map(_decode_prior)
+    prior_ds = prior_ds.map(hu2mu)
     prior_ds = prior_ds.repeat()
 
     # training set
     combined_ds = tf.data.Dataset.zip((vol_ds, ndl_ds))  # (([u, v, 360], [3], [3]), [u, v, 360])
-    combined_ds = combined_ds.map(_tensorize)
+    combined_ds = combined_ds.map(_tensorize)  # [u, v, 360], [3], [3], [u, v, 360]
+    combined_ds = combined_ds.map(
+        lambda x0, x1, x2, y: tf.numpy_function(
+            func=_modify_shape_to_z_fov,
+            inp=[x0, x1, x2, y],
+            Tout=[tf.float32, tf.float32, tf.int64, tf.float32],
+        )
+    )
     # generate the 3D reconstructions from cone-beam head and needle projections
     combined_ds = combined_ds.map(
-        lambda x0, x1, x2, y: tf.numpy_function(func=_reconstruct_3D, inp=[x0, x1, x2, y], Tout=tf.float32),
+        lambda x0, x1, x2, y: tf.numpy_function(
+            func=_reconstruct_3D,
+            inp=[x0, x1, x2, y],
+            Tout=tf.float32,
+        )
     )  # [w, h, d, 2]
     tds = combined_ds.map(lambda x: tf.transpose(x, (2, 1, 0, 3)))  # [d, h, w, 2]
     del combined_ds, needle_dataset, vol_ds, volumes_dataset
 
     tds = tf.data.Dataset.zip((tds, prior_ds))  # ([d, h, w, 2], [d, h, w, 1])
+    tds = tds.map(
+        lambda x, y: tf.numpy_function(
+            func=_equalize_z_dimensions,
+            inp=[x, y],
+            Tout=[tf.float32, tf.float32],
+        ))
+    tds = tds.map(create_gt_from_tensors)
     tds = tds.map(lambda x, y: tf.concat([x, y], axis=3))  # [d, h, w, 3]
     tds = tds.unbatch()  # [h, w, 3]
+    tds = tds.map(mu2hu)
     tds = tds.map(augmentation)  # ([2, h, w, 1], [h, w, 1])
     tds = tds.map(_hu2normalized)
     tds = tds.shuffle(buffer_size=buffer_size)
@@ -121,7 +143,6 @@ def generate_datasets(val_path, test_path, batch_size, buffer_size=1024):
     teds = teds.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
     return tds, vds, teds
-
 
 
 def generate_datasets_wo_prior(val_path, test_path, batch_size, buffer_size=1024):
@@ -203,13 +224,44 @@ def generate_datasets_wo_prior(val_path, test_path, batch_size, buffer_size=1024
 
     return tds, vds, teds
 
+
+# in/out: [u, v, 360], [3], [3], [u, v, 360]
+def _modify_shape_to_z_fov(vol_projections: np.ndarray,
+                           voxel_spacing: np.ndarray,
+                           volume_shape: np.ndarray,
+                           needle_projections: np.ndarray) \
+                           -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    field_of_view = 200.  # FOV in z direction, 200mm
+    num_fov_slices = int(field_of_view//voxel_spacing[2])
+    num_fov_slices += (num_fov_slices - volume_shape[0]) % 2
+    volume_shape[0] = min(volume_shape[0], num_fov_slices)
+    return vol_projections, voxel_spacing, volume_shape, needle_projections
+
+
+def _equalize_z_dimensions(reco_volume: tf.Tensor,
+                           prior_volume: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+    if prior_volume.shape[0] == reco_volume.shape[0]:
+        return reco_volume, prior_volume
+    zdiff = (prior_volume.shape[0] - reco_volume.shape[0])//2
+    return reco_volume, prior_volume[zdiff:-zdiff]
+
+
+def create_gt_from_tensors(recos: tf.Tensor,
+                           prior: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+    reco_sparse, needle_full = recos[..., 0], recos[..., 1]
+    full_reco = needle_full + prior[..., 0]
+    return tf.stack([reco_sparse, full_reco], -1), prior
+
+
 def _hu2normalized(tensor0: tf.Tensor, tensor1: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
     return hu2mu(tensor0, .02)/hu2mu(CARMH_GT_UPPER_99_PERCENTILE, .02), \
             hu2mu(tensor1, .02)/hu2mu(CARMH_GT_UPPER_99_PERCENTILE, .02)
 
+
 def _normalise(x: tf.Tensor):
     x = tf.clip_by_value(x, clip_value_min=0, clip_value_max=CARM_DCT_MAX)
     return x/CARM_DCT_MAX
+
 
 def _hu2dctnormalized(tensor0: tf.Tensor, tensor1: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
     return _normalise(tensor0), _normalise(tensor1)
@@ -250,7 +302,6 @@ def augmentation(input_tensor: tf.Tensor):
     return tf.stack((sparse_reco, prior)), full_reco
 
 
-
 def reconstruct_volume_from_projections(projections: np.ndarray, radon: ConeBeam,
                                         voxel_dims: Tuple[int, int, int],
                                         voxel_size: Tuple[float, float, float]) \
@@ -274,15 +325,13 @@ def reconstruct_volume_from_projections(projections: np.ndarray, radon: ConeBeam
     projections_t = projections_t[None, None, ...]
     reco_t = radon.backprojection(filter_sinogram_3d(projections_t, HANN))
     reco_t = reco_t*det_spacing_v/src_det_dist*src_dist  # cone beam correction
-    reco_t = mu2hu(reco_t, 0.02)
+    # reco_t = mu2hu(reco_t, 0.02)
     reco = reco_t[0, 0].cpu()
     torch.cuda.empty_cache()
     return reco.numpy().transpose()
 
 
-
 def _reconstruct_3D(vol_projections, voxel_size, volume_shape, ndl_projections, wo_prior=False):
-
     full_radon = create_radon(TOTAL_PROJECTION_NUM)
     sparse_radon = create_radon(SPARSE_PROJECTION_NUM)
 
@@ -293,8 +342,8 @@ def _reconstruct_3D(vol_projections, voxel_size, volume_shape, ndl_projections, 
     vol_ndl_projections = vol_projections + ndl_projections
 
     # create reconstruction of interventional volume w/ all projections
-    full_with_needle = reconstruct_volume_from_projections(
-         vol_ndl_projections, full_radon, voxel_dims, voxel_size)
+    full_needle = reconstruct_volume_from_projections(
+         ndl_projections, full_radon, voxel_dims, voxel_size)
 
     # create reconstruction of interventional volume w/ sparse projections
     sparse_with_needle = reconstruct_volume_from_projections(
@@ -302,13 +351,13 @@ def _reconstruct_3D(vol_projections, voxel_size, volume_shape, ndl_projections, 
         ::(vol_ndl_projections.shape[-1] // num_sparse_projections + num_sparse_projections % 2)],
         sparse_radon, voxel_dims, voxel_size)
     if wo_prior:
-        return np.stack((sparse_with_needle, full_with_needle, sparse_with_needle), -1)
+        return np.stack((sparse_with_needle, full_needle, sparse_with_needle), -1)
     else:
-        return np.stack((sparse_with_needle, full_with_needle), -1)
+        return np.stack((sparse_with_needle, full_needle), -1)
 
 
 def _tensorize(vol_example: Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor, tf.Tensor]],
-               ndl_example: tf.Tensor):
+               ndl_example: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
     return vol_example[0], tf.stack(vol_example[1]), tf.stack(vol_example[2]), ndl_example
 
 def _get_volume(vol_example: Tuple[tf.Tensor, Tuple[tf.Tensor, tf.Tensor, tf.Tensor], Tuple[tf.Tensor, tf.Tensor, tf.Tensor]],
@@ -377,6 +426,7 @@ def _decode_needle_projections(example_proto):
 
     return tf.reshape(projections, (width, height, angles))
 
+
 def _random_rotate(image: tf.Tensor):
     return tf.roll(
         image,
@@ -388,6 +438,7 @@ def _random_rotate(image: tf.Tensor):
             dtype=tf.int32,
             seed=10),
         -1)
+
 
 def _decode_prior(example_proto):
     feature = tf.io.parse_single_example(
@@ -441,6 +492,7 @@ def _decode_validation_data(example_proto):
 
     return tensor
 
+
 def _decode_validation_data_wo_prior(example_proto):
     feature = tf.io.parse_single_example(
         example_proto,
@@ -466,9 +518,7 @@ def _decode_validation_data_wo_prior(example_proto):
 
 def create_radon(num_views: int) -> ConeBeam:
     ct_system = ArtisQSystem(DetectorBinning.BINNING4x4)
-    #start_angle = np.random.randint(0, 11)
-    start_angle = 0
-    angles = np.linspace(start_angle, 2*np.pi, num_views, endpoint=False, dtype=np.float32)
+    angles = np.linspace(0, 2*np.pi, num_views, endpoint=False, dtype=np.float32)
     src_dist = ct_system.carm_span*4/6
     det_dist = ct_system.carm_span*2/6
     # src_det_dist = src_dist + det_dist
@@ -516,36 +566,40 @@ def _tuplelize(tensor: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
 #         _ = next(ds_iter)
 #     print(f'{(time() - t0)/num_iterations}s per batch')
 
+
+def test_training_set():
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as e:
+            print(e)
+
+    _, _, tds = generate_datasets(
+        VALIDATION_RECORDS_13_PATH, 
+        TEST_RECORDS_13_PATH, 32, 1)
+    from time import time
+    ds_iter = iter(tds)
+    input_data, output_data = next(ds_iter)
+    print(input_data.shape, output_data.shape)
+    from matplotlib import pyplot as plt
+    plt.imshow(input_data[0, ..., 0], vmin=0, vmax=.7)
+    plt.figure()
+    plt.imshow(input_data[1, ..., 0], vmin=0, vmax=.7)
+    plt.figure()
+    plt.imshow(output_data[..., 0], vmin=0, vmax=.7)
+    plt.show()
+    print(input_data.shape, output_data.shape)
+    t0 = time()
+    num_iterations: int = TEST_NUM // 32
+    from tqdm import tqdm
+    for _ in tqdm(range(num_iterations - 1)):
+        _ = next(ds_iter)
+    print(f'{(time() - t0)/num_iterations}s per batch')
+
+    # ([d, h, w, 2], ([d, h, w, 1], [3]))
+
+
 if __name__ == '__main__':
-
-    with open(JSON_PATH, 'r') as file_handle:
-        json_dict = json.load(file_handle)
-        train_subjects = json_dict['train_subjects']
-
-    # load con-beam projections of head
-    file_paths = [
-        os.path.join(TRAIN_CONEBEAM_PROJECTIONS_PATH, f'{tr}.tfrecord')
-        for tr in train_subjects
-    ]
-    volumes_dataset = tf.data.TFRecordDataset(file_paths)
-    vol_ds = volumes_dataset.map(_decode_vol_projections)  # ([w, h, 360], [3], [3])
-    #tf.reshape(projections, (width, height, angles)), voxel_spacing, volume_shape
-    vol_ds = next(iter(vol_ds))
-   # vol_ds = vol_ds.repeat()
-
-    # load needle projections
-    file_paths = [
-        os.path.join(NEEDLE_PROJECTIONS_PATH, filename)
-        for filename in os.listdir(NEEDLE_PROJECTIONS_PATH)
-        if filename.endswith('.tfrecord')
-    ]
-    needle_dataset = tf.data.TFRecordDataset(file_paths)
-    ndl_ds = needle_dataset.map(_decode_needle_projections)  # ([u, v, 360], [3], [3])
-    ndl_ds = next(iter(ndl_ds))
-    # load prior helical scans
-    file_paths = [
-        os.path.join(TRAIN_HELICAL_PRIOR_PATH, f'{tr}.tfrecord')
-        for tr in train_subjects
-    ]
-#vol_projections, voxel_size, volume_shape, ndl_projections
-    _reconstruct_3D(vol_ds[0], vol_ds[1], vol_ds[2], ndl_ds)
+    test_training_set()

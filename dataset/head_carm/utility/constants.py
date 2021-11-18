@@ -1,8 +1,8 @@
 DATA_PATH= '/project/sghosh/dataset/carm_head/'
 AUG_NUM = 2
-TRAIN_NUM = 17180
-VAL_NUM = 11631
-TEST_NUM = 10296
+TRAIN_NUM = 1895
+VAL_NUM = 1290
+TEST_NUM = 1518
 
 TB_PATH = '/scratch/sghosh/VAE/logdir'
 

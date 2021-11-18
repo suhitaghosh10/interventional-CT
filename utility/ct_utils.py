@@ -5,11 +5,11 @@ from torch_radon import cuda_backend
 from torch_radon.filtering import FourierFilters
 
 
-def mu2hu(volume: torch.Tensor, mu_water: float) -> torch.Tensor:
+def mu2hu(volume: torch.Tensor, mu_water: float = 0.02) -> torch.Tensor:
     return (volume - mu_water)/mu_water * 1000
 
 
-def hu2mu(volume: torch.Tensor, mu_water: float) -> torch.Tensor:
+def hu2mu(volume: torch.Tensor, mu_water: float = 0.02) -> torch.Tensor:
     return (volume * mu_water)/1000 + mu_water
 
 
