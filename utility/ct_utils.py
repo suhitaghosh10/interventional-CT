@@ -14,7 +14,6 @@ def hu2mu(volume: torch.Tensor, mu_water: float = 0.02) -> torch.Tensor:
 
 
 def filter_sinogram_3d(sinogram: torch.Tensor, filter_name="ramp"):
-    fft_cache = cuda_backend.FFTCache(8)
     fourier_filters = FourierFilters()
     sinogram = sinogram.permute(0, 1, 3, 2, 4)
     sino_shape = sinogram.shape
@@ -27,14 +26,14 @@ def filter_sinogram_3d(sinogram: torch.Tensor, filter_name="ramp"):
     pad = padded_size - size
     padded_sinogram = F.pad(sinogram.float(), (0, pad, 0, 0))
 
-    sino_fft = cuda_backend.rfft(padded_sinogram, fft_cache) / np.sqrt(padded_size)
+    sino_fft = torch.fft.rfft(padded_sinogram)
 
     # get filter and apply
-    f = fourier_filters.get(padded_size, filter_name, sinogram.device)
+    f = fourier_filters.get(padded_size, filter_name, sinogram.device)[..., 0]
     filtered_sino_fft = sino_fft * f
 
     # Inverse fft
-    filtered_sinogram = cuda_backend.irfft(filtered_sino_fft, fft_cache) / np.sqrt(padded_size)
+    filtered_sinogram = torch.fft.irfft(filtered_sino_fft)
     filtered_sinogram = filtered_sinogram[:, :, :-pad] * (np.pi / (2 * n_angles))
 
     return filtered_sinogram.to(dtype=sinogram.dtype).reshape(sino_shape).permute(0, 1, 3, 2, 4)

@@ -10,9 +10,9 @@ from PIL import Image
 from skimage.metrics import structural_similarity as skssim
 import tensorflow as tf
 
-from dataset.head_carm.models.prior_unet import unet
+from dataset.head_carm.models.prior_unet import UNet
 from dataset.head_carm.utility.dataset_creation import \
-    _reconstruct_3D, _decode_prior, _hu2normalized, _tuplelize
+    _reconstruct_3d, _decode_prior, _hu2normalized, _tuplelize
 from dataset.head_carm.utility.constants import IMG_DIM_INP_2D, JSON_PATH, \
     CARMH_GT_UPPER_99_PERCENTILE
 from utility.constants import CHKPOINT_NAME
@@ -43,7 +43,7 @@ def generate_testset(batch_size: Union[int, None],
     needle_projections, _, _, _ = create_projections(needle_file, load_nifty, center=center)
     needle_projections = np.roll(needle_projections, roll, -1)
 
-    reco = _reconstruct_3D(volume_projections, voxel_size, volume_shape, needle_projections)  # [w, h, d, 2]
+    reco = _reconstruct_3d(volume_projections, voxel_size, volume_shape, needle_projections)  # [w, h, d, 2]
     print(reco.shape)
 
     prior_ds = tf.data.TFRecordDataset([prior_file])
@@ -83,7 +83,7 @@ def generate_testset_wo_prior(batch_size: Union[int, None],
     needle_projections, _, _, _ = create_projections(needle_file, load_nifty, center=center)
     needle_projections = np.roll(needle_projections, roll, -1)
 
-    reco = _reconstruct_3D(volume_projections, voxel_size, volume_shape, needle_projections)  # [w, h, d, 2]
+    reco = _reconstruct_3d(volume_projections, voxel_size, volume_shape, needle_projections)  # [w, h, d, 2]
 
     print(reco.shape)
 
@@ -121,7 +121,7 @@ def create_figure1_images():
     needle_projections, _, _, _ = create_projections(needle_file, load_nifty, center=(0, 0, 0))
     needle_projections = np.zeros_like(needle_projections)
 
-    reco = _reconstruct_3D(volume_projections, voxel_size, volume_shape, needle_projections)  # [w, h, d, 2]
+    reco = _reconstruct_3d(volume_projections, voxel_size, volume_shape, needle_projections)  # [w, h, d, 2]
     reco = _hu2normalized(reco, reco)[0]
 
     sparse_needle_vol = elements_in[0].transpose()
@@ -154,7 +154,7 @@ def create_figure1_images():
 
 
 def get_model(path: str):
-    unet_cls = unet()
+    unet_cls = UNet()
 
     act = tf.keras.layers.LeakyReLU(alpha=0.2)
     model = unet_cls.build_model(d=8, act=act)

@@ -6,7 +6,7 @@ from utility.constants import *
 
 import argparse
 
-from dataset.head_carm.models.prior_unet import unet
+from dataset.head_carm.models.prior_unet import UNet
 from utility.utils import dct_blockwise_batch
 from utility.weight_norm import AdamWithWeightnorm
 from utility.logger_utils_prior import PlotReconstructionCallback

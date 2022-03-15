@@ -8,11 +8,18 @@ from tqdm import tqdm
 from dataset.head_carm.utility.constants import *
 from dataset.head_carm.utility.dataset_creation import _tensorize, \
     _decode_needle_projections, _decode_prior, _decode_vol_projections, \
-    _modify_shape_to_z_fov, _reconstruct_3D, _equalize_z_dimensions, \
+    _modify_shape_to_z_fov, _reconstruct_3d, _equalize_z_dimensions, \
     create_gt_from_tensors
 from utility.constants import *
 from utility.ct_utils import mu2hu, hu2mu
-from utility.utils import _int64_feature, _bytes_feature
+
+
+def _bytes_feature(value):
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+
+def _int64_feature(value):
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
 
 def generate_datasets(valid_test: str, out_path: str):
@@ -62,7 +69,7 @@ def generate_datasets(valid_test: str, out_path: str):
         )
         combined_ds = combined_ds.map(
             lambda x0, x1, x2, y: tf.numpy_function(
-                func=_reconstruct_3D,
+                func=_reconstruct_3d,
                 inp=[x0, x1, x2, y],
                 Tout=tf.float32,
             )

@@ -1,15 +1,77 @@
+import gc
 import json
 import os
 import random
+from typing import Callable
 
 import tensorflow as tf
 from tqdm import tqdm
 
-from dataset.head_carm.utility.constants import *
 from dataset.head_carm.utility.dataset_creation import _modify_shape_to_z_fov
 from dataset.head_carm.utility.dataset_creation import _decode_vol_projections
 from dataset.head_carm.utility.dataset_creation import _decode_validation_data
-from utility.constants import *
+from dataset.head_carm.utility.constants import IMG_DIM_INP_2D, JSON_PATH, \
+    TEST_RECORDS_13_PATH, TRAIN_CONEBEAM_PROJECTIONS_PATH
+from utility.utils import dct_and_pixelwise_mae, dct_and_pixelwise_mse, \
+    mae, multiscale_ssim_l2, mse, multiscale_ssim_l1, ssim_l2, \
+    laplacian_of_gaussian_MAE
+
+
+def set_available_gpus(cmd_args):
+    gpu_id = cmd_args.gpu
+    nb_gpus = len(gpu_id.split(','))
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
+    return nb_gpus
+
+
+def apply_tf_gpu_memory_growth():
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as err:
+            print(err)
+
+
+class ClearMemory(tf.keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        gc.collect()
+        tf.keras.backend.clear_session()
+
+
+def run_distributed(run_fn: Callable, *args):
+    # Create a MirroredStrategy.
+    strategy = tf.distribute.MirroredStrategy()
+    print(f'Number of devices: {strategy.num_replicas_in_sync}')
+
+    # Open a strategy scope.
+    with strategy.scope():
+        run_fn(*args)
+
+
+def needle_weighting(tensor: tf.Tensor) -> tf.Tensor:
+    return tf.math.sigmoid(20*(tensor - .6))
+
+
+def generate_loss_dict():
+    return {
+        'MSE': mse(IMG_DIM_INP_2D),
+        'WMSE': mse(IMG_DIM_INP_2D, weight_fn=needle_weighting),
+        'MSSIM_MSE': multiscale_ssim_l2(IMG_DIM_INP_2D),
+        'MSSIM_WMSE': multiscale_ssim_l2(IMG_DIM_INP_2D, weight_fn=needle_weighting),
+        'SSIM_MSE': ssim_l2(IMG_DIM_INP_2D),
+        'SSIM_WMSE': ssim_l2(IMG_DIM_INP_2D, weight_fn=needle_weighting),
+        'DCT_MSE': dct_and_pixelwise_mse(IMG_DIM_INP_2D),  # only eager mode
+        # 'LoG_MSE': laplacian_of_gaussian_MSE(  # only eager mode
+        #     IMG_DIM_INP_2D,
+        #     mse_weight=10.,
+        #     log_weight=0.1),
+        'L1': mae(IMG_DIM_INP_2D),
+        'MSSIM_L1': multiscale_ssim_l1(IMG_DIM_INP_2D),
+        'DCT_L1': dct_and_pixelwise_mae(IMG_DIM_INP_2D),  # only eager mode
+        'LoG_L1': laplacian_of_gaussian_MAE(IMG_DIM_INP_2D),  # only eager mode
+    }
 
 
 # # can be used for validation and test records
@@ -27,6 +89,7 @@ from utility.constants import *
 #     width = feature['width']
 
 #     return (depth, height, width)
+
 
 # count test or validation records
 def count_test_slices():
@@ -51,7 +114,7 @@ def count_test_slices():
 # count train
 def count_train_slices():
     # load training subjects
-    with open(JSON_PATH, 'r') as file_handle:
+    with open(JSON_PATH, 'r', encoding='utf-8') as file_handle:
         json_dict = json.load(file_handle)
         train_subjects = json_dict['train_subjects']
 
@@ -83,7 +146,7 @@ def create_train_valid_test():
     train_subjects = all_subjects[:int(0.7*len(all_subjects))]
     valid_subjects = all_subjects[int(0.7*len(all_subjects)):int(0.85*len(all_subjects))]
     test_subjects = all_subjects[int(0.85*len(all_subjects)):]
-    with open('train_valid_test.json', 'w', newline='') as json_handle:
+    with open('train_valid_test.json', 'w', newline='', encoding='utf-8') as json_handle:
         json.dump({
             'train_subjects': train_subjects,
             'valid_subjects': valid_subjects,

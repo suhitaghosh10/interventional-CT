@@ -17,13 +17,13 @@ class PlotReconstructionCallback(tfk.callbacks.Callback):
                  batched=False,
                  is_shuffle=True,
                  is_augment=True,
-                 shuffle_buffer_size=2048,
+                 shuffle_buffer_size=32,
                  log_on_epoch_end=True,
                  step_num=100,
                  chkpoint_path=None,
                  init_epoch=1):
 
-        super(PlotReconstructionCallback, self).__init__()
+        super().__init__()
         self.model_type = model_type
         self.logdir = logdir
         self.save_by_key = save_by
